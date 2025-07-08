@@ -1,251 +1,257 @@
 """
-Bayesian Network GA-based Synthetic Data Generator
-Main entry point for the synthetic data generation pipeline.
+Bayesian Anomaly Detection with Genetic Algorithm Optimization
+
+This module implements a scalable Bayesian Network-based anomaly detection system
+that handles large feature sets by dividing them into smaller groups.
 """
 
-import os
 import pandas as pd
 import numpy as np
-from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
 
-# Import project modules
-from data.loader import load_data, validate_data
-from preprocessing.preprocessing import prepare_data_for_bn
-from bn_model.bn_structure import learn_bn_structure, estimate_parameters, validate_bn_model, get_model_info
-from bn_model.bn_sampler import sample_bn_data, validate_synthetic_data, save_synthetic_data
-from ga_optimizer.ga_cpt_optimizer import ga_optimize, evaluate_ga_progress
-from utils.evaluation import compute_comprehensive_evaluation, print_evaluation_summary, save_evaluation_results
+from src.data_loader import DataLoader
+from src.preprocessor import DataPreprocessor
+from src.feature_grouper import FeatureGrouper
+from src.bayesian_network import BayesianNetworkLearner
+from src.anomaly_detector import AnomalyDetector
+from src.genetic_optimizer import GeneticOptimizer
+from src.visualizer import ResultVisualizer
 
-
-def main():
+class BayesianAnomalyDetectionSystem:
     """
-    Main pipeline for generating synthetic data using Bayesian Networks and Genetic Algorithm.
+    Main system for Bayesian Network-based anomaly detection.
     """
-    print("="*80)
-    print("BAYESIAN NETWORK GA-BASED SYNTHETIC DATA GENERATOR")
-    print("="*80)
     
-    # Configuration
-    data_file = "data/Dati_wallbox_aggregati.csv"
-    n_bins = 3  # Number of bins for discretization
-    n_samples_synthetic = None  # Will use same as real data
-    max_variables = 50  # Maximum number of variables to use (for performance)
+    def __init__(self, data_path: str, config: dict = None):
+        """
+        Initialize the anomaly detection system.
+        
+        Args:
+            data_path (str): Path to the CSV data file
+            config (dict): Configuration parameters
+        """
+        self.data_path = data_path
+        self.config = self._merge_configs(self._default_config(), config or {})
+        
+        # Initialize components
+        self.data_loader = DataLoader()
+        self.preprocessor = DataPreprocessor(self.config['preprocessing'])
+        self.feature_grouper = FeatureGrouper(self.config['feature_grouping'])
+        self.bn_learner = BayesianNetworkLearner(self.config['bayesian_network'])
+        self.anomaly_detector = AnomalyDetector(self.config['anomaly_detection'])
+        self.genetic_optimizer = GeneticOptimizer(self.config['genetic_algorithm'])
+        self.visualizer = ResultVisualizer()
+        
+        # Data storage
+        self.raw_data = None
+        self.processed_data = None
+        self.feature_groups = None
+        self.bayesian_networks = {}
+        self.likelihood_scores = None
+        self.anomaly_scores = None
+        self.anomalies = None
+        
+    def _merge_configs(self, default_config: dict, user_config: dict) -> dict:
+        """
+        Merge user configuration with default configuration.
+        
+        Args:
+            default_config (dict): Default configuration
+            user_config (dict): User-provided configuration
+            
+        Returns:
+            dict: Merged configuration
+        """
+        merged = default_config.copy()
+        for key, value in user_config.items():
+            if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+                merged[key].update(value)
+            else:
+                merged[key] = value
+        return merged
     
-    # GA parameters
-    ga_params = {
-        'n_gen': 10,  # Reduced for large datasets
-        'pop_size': 10,  # Reduced for large datasets
-        'cx_prob': 0.7,  # Crossover probability
-        'mut_prob': 0.3,  # Mutation probability
-        'verbose': True
-    }
+    def _default_config(self):
+        """Default configuration parameters."""
+        return {
+            'preprocessing': {
+                'missing_threshold': 0.5,  # Drop columns with >50% missing
+                'scale_features': True,
+                'handle_categorical': True
+            },
+            'feature_grouping': {
+                'group_size': 15,  # Features per group
+                'strategy': 'correlation'  # 'random', 'correlation', 'domain'
+            },
+            'bayesian_network': {
+                'structure_learning': 'naive_bayes',  # 'naive_bayes', 'pc', 'hc'
+                'discretization_bins': 5,
+                'max_parents': 3
+            },
+            'anomaly_detection': {
+                'aggregation_method': 'mean',  # 'mean', 'min', 'weighted'
+                'threshold_percentile': 5  # Bottom 5% as anomalies
+            },
+            'genetic_algorithm': {
+                'population_size': 50,
+                'generations': 100,
+                'mutation_rate': 0.1,
+                'crossover_rate': 0.8
+            }
+        }
     
-    try:
-        # Step 1: Load and validate data
-        print(f"\n1. Loading data from: {data_file}")
-        if not os.path.exists(data_file):
-            print(f"Error: Data file not found: {data_file}")
-            print("Please ensure the CSV file is in the data/ directory")
-            return
+    def run_full_pipeline(self):
+        """
+        Execute the complete anomaly detection pipeline.
         
-        df_original = load_data(data_file)
+        Returns:
+            dict: Results containing anomalies, scores, and metrics
+        """
+        print("🚀 Starting Bayesian Anomaly Detection Pipeline")
+        print("=" * 60)
         
-        if not validate_data(df_original):
-            print("Data validation failed. Please check your data.")
-            return
+        # Step 1: Data Loading
+        print("📊 Step 1: Loading data...")
+        self.raw_data = self.data_loader.load_data(self.data_path)
+        print(f"   Loaded {self.raw_data.shape[0]} samples with {self.raw_data.shape[1]} features")
         
-        # Step 2: Preprocess data
-        print(f"\n2. Preprocessing data (discretization with {n_bins} bins)")
-        df_processed, preprocessing_info = prepare_data_for_bn(df_original, n_bins=n_bins)
+        # Step 2: Data Preprocessing
+        print("🔧 Step 2: Preprocessing data...")
+        self.processed_data = self.preprocessor.preprocess(self.raw_data)
+        print(f"   After preprocessing: {self.processed_data.shape[1]} features")
         
-        print(f"Preprocessed data shape: {df_processed.shape}")
+        # Step 3: Feature Grouping
+        print("📦 Step 3: Grouping features...")
+        self.feature_groups = self.feature_grouper.create_groups(self.processed_data)
+        print(f"   Created {len(self.feature_groups)} feature groups")
         
-        # Step 2.5: Feature selection for large datasets
-        if df_processed.shape[1] > max_variables:
-            print(f"\n2.5. Feature selection (reducing from {df_processed.shape[1]} to {max_variables} variables)")
+        # Step 4: Bayesian Network Learning
+        print("🧠 Step 4: Learning Bayesian Networks...")
+        self.bayesian_networks = self.bn_learner.learn_networks(
+            self.processed_data, self.feature_groups
+        )
+        print(f"   Learned {len(self.bayesian_networks)} Bayesian Networks")
+        
+        # Step 5: Likelihood Calculation
+        print("📈 Step 5: Computing likelihoods...")
+        self.likelihood_scores = self.bn_learner.compute_likelihoods(
+            self.processed_data, self.bayesian_networks, self.feature_groups
+        )
+        print(f"   Computed likelihood matrix: {self.likelihood_scores.shape}")
+        
+        # Step 6: Anomaly Detection
+        print("🔍 Step 6: Detecting anomalies...")
+        self.anomaly_scores, self.anomalies = self.anomaly_detector.detect_anomalies(
+            self.likelihood_scores
+        )
+        print(f"   Detected {len(self.anomalies)} anomalies")
+        
+        # Step 7: GA Optimization (Optional)
+        if self.config.get('use_genetic_optimization', True):
+            print("🧬 Step 7: Optimizing with Genetic Algorithm...")
+            optimized_params = self.genetic_optimizer.optimize(
+                self.likelihood_scores, self.processed_data
+            )
+            print(f"   Optimized threshold percentile: {optimized_params['threshold_percentile']:.2f}%")
+            print(f"   Optimized aggregation method: {optimized_params['aggregation_method']}")
             
-            # Remove constant variables (those with only 1 unique value)
-            constant_cols = []
-            for col in df_processed.columns:
-                if df_processed[col].nunique() <= 1:
-                    constant_cols.append(col)
-            
-            if constant_cols:
-                print(f"Removing {len(constant_cols)} constant variables")
-                df_processed = df_processed.drop(columns=constant_cols)
-            
-            # If still too many variables, select most informative ones
-            if df_processed.shape[1] > max_variables:
-                from sklearn.feature_selection import mutual_info_classif
-                from sklearn.preprocessing import LabelEncoder
-                
-                print(f"Selecting top {max_variables} most informative variables")
-                
-                # Use the first variable as target for feature selection
-                target_col = df_processed.columns[0]
-                feature_cols = df_processed.columns[1:]
-                
-                # Calculate mutual information
-                mi_scores = mutual_info_classif(df_processed[feature_cols], df_processed[target_col])
-                
-                # Select top features
-                feature_importance = list(zip(feature_cols, mi_scores))
-                feature_importance.sort(key=lambda x: x[1], reverse=True)
-                
-                selected_features = [target_col] + [f[0] for f in feature_importance[:max_variables-1]]
-                df_processed = df_processed[selected_features]
-                
-                print(f"Selected features: {selected_features[:10]}..." if len(selected_features) > 10 else f"Selected features: {selected_features}")
+            # Re-detect with optimized parameters
+            self.anomaly_detector.update_parameters(optimized_params)
+            self.anomaly_scores, self.anomalies = self.anomaly_detector.detect_anomalies(
+                self.likelihood_scores
+            )
+            print(f"   Optimized detection: {len(self.anomalies)} anomalies")
         
-        print(f"Final data shape: {df_processed.shape}")
-        print(f"Variables: {list(df_processed.columns)}")
+        # Step 8: Results Visualization
+        print("📊 Step 8: Generating visualizations...")
+        self.visualizer.create_visualizations(
+            self.anomaly_scores, self.anomalies, self.likelihood_scores
+        )
         
-        # Step 3: Learn Bayesian Network structure
-        print(f"\n3. Learning Bayesian Network structure")
-        bn_model = learn_bn_structure(df_processed, scoring_method='bic')
+        print("✅ Pipeline completed successfully!")
+        print("=" * 60)
         
-        # Get model information
-        model_info = get_model_info(bn_model)
-        print(f"Learned BN structure:")
-        print(f"  Nodes: {model_info['n_nodes']}")
-        print(f"  Edges: {model_info['n_edges']}")
-        print(f"  Edges: {model_info['edges']}")
+        return {
+            'anomalies': self.anomalies,
+            'anomaly_scores': self.anomaly_scores,
+            'likelihood_scores': self.likelihood_scores,
+            'feature_groups': self.feature_groups,
+            'n_anomalies': len(self.anomalies)
+        }
+    
+    def get_anomaly_analysis(self):
+        """
+        Get detailed analysis of detected anomalies.
         
-        # Step 4: Estimate initial parameters
-        print(f"\n4. Estimating initial CPT parameters")
-        bn_model = estimate_parameters(bn_model, df_processed, estimator_type='mle')
+        Returns:
+            dict: Detailed analysis results
+        """
+        if self.anomalies is None:
+            raise ValueError("No anomalies detected yet. Run the pipeline first.")
         
-        # Validate the model
-        if not validate_bn_model(bn_model, df_processed):
-            print("Model validation failed. Exiting.")
-            return
-        
-        # Step 5: Generate baseline synthetic data
-        print(f"\n5. Generating baseline synthetic data")
-        n_samples_synthetic = len(df_processed) if n_samples_synthetic is None else n_samples_synthetic
-        
-        baseline_synthetic = sample_bn_data(bn_model, n_samples_synthetic)
-        validate_synthetic_data(baseline_synthetic, df_processed)
-        
-        # Step 6: Evaluate baseline performance
-        print(f"\n6. Evaluating baseline model performance")
-        baseline_evaluation = compute_comprehensive_evaluation(df_processed, baseline_synthetic)
-        
-        print("Baseline Model Performance:")
-        print_evaluation_summary(baseline_evaluation)
-        
-        # Step 7: Optimize CPTs using Genetic Algorithm
-        print(f"\n7. Optimizing CPT parameters using Genetic Algorithm")
-        print(f"GA Parameters: {ga_params}")
-        
-        optimized_model, ga_logbook = ga_optimize(bn_model, df_processed, **ga_params)
-        
-        # Evaluate GA progress
-        if ga_logbook:
-            ga_progress = evaluate_ga_progress(ga_logbook)
-        
-        # Step 8: Generate optimized synthetic data
-        print(f"\n8. Generating optimized synthetic data")
-        optimized_synthetic = sample_bn_data(optimized_model, n_samples_synthetic)
-        validate_synthetic_data(optimized_synthetic, df_processed)
-        
-        # Step 9: Evaluate optimized performance
-        print(f"\n9. Evaluating optimized model performance")
-        optimized_evaluation = compute_comprehensive_evaluation(df_processed, optimized_synthetic)
-        
-        print("Optimized Model Performance:")
-        print_evaluation_summary(optimized_evaluation)
-        
-        # Step 10: Compare baseline vs optimized
-        print(f"\n10. Comparing baseline vs optimized models")
-        
-        baseline_fitness = baseline_evaluation['summary_metrics']
-        optimized_fitness = optimized_evaluation['summary_metrics']
-        
-        print("Performance Comparison:")
-        print(f"  Average KL Divergence: {baseline_fitness['average_kl_divergence']:.4f} → {optimized_fitness['average_kl_divergence']:.4f}")
-        print(f"  Average JS Divergence: {baseline_fitness['average_js_divergence']:.4f} → {optimized_fitness['average_js_divergence']:.4f}")
-        print(f"  MI Correlation: {baseline_fitness['mutual_info_correlation']:.4f} → {optimized_fitness['mutual_info_correlation']:.4f}")
-        print(f"  Similar Distributions: {baseline_fitness['similar_distributions_ratio']:.1%} → {optimized_fitness['similar_distributions_ratio']:.1%}")
-        
-        # Step 11: Save results
-        print(f"\n11. Saving results")
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Save synthetic data
-        baseline_file = f"synthetic_data_baseline_{timestamp}.csv"
-        optimized_file = f"synthetic_data_optimized_{timestamp}.csv"
-        
-        save_synthetic_data(baseline_synthetic, baseline_file, include_timestamp=False)
-        save_synthetic_data(optimized_synthetic, optimized_file, include_timestamp=False)
-        
-        # Save evaluation results
-        evaluation_file = f"evaluation_results_{timestamp}.json"
-        combined_evaluation = {
-            'baseline': baseline_evaluation,
-            'optimized': optimized_evaluation,
-            'preprocessing_info': preprocessing_info,
-            'model_info': model_info,
-            'ga_params': ga_params
+        analysis = {
+            'total_samples': len(self.processed_data),
+            'total_anomalies': len(self.anomalies),
+            'anomaly_percentage': len(self.anomalies) / len(self.processed_data) * 100,
+            'anomaly_scores_stats': {
+                'mean': np.mean(self.anomaly_scores),
+                'std': np.std(self.anomaly_scores),
+                'min': np.min(self.anomaly_scores),
+                'max': np.max(self.anomaly_scores),
+                'median': np.median(self.anomaly_scores)
+            },
+            'top_anomalies': self.anomalies[:10] if len(self.anomalies) > 10 else self.anomalies
         }
         
-        save_evaluation_results(combined_evaluation, evaluation_file)
-        
-        print(f"\nResults saved:")
-        print(f"  Baseline synthetic data: {baseline_file}")
-        print(f"  Optimized synthetic data: {optimized_file}")
-        print(f"  Evaluation results: {evaluation_file}")
-        
-        print(f"\n{'='*80}")
-        print("PIPELINE COMPLETED SUCCESSFULLY!")
-        print(f"{'='*80}")
-        
-    except Exception as e:
-        print(f"\nError in main pipeline: {e}")
-        import traceback
-        traceback.print_exc()
+        return analysis
 
-
-def run_quick_test():
-    """
-    Run a quick test with minimal parameters for debugging.
-    """
-    print("Running quick test...")
+def main():
+    """Main execution function."""
+    # Configuration
+    data_path = "data/Dati_wallbox_aggregati.csv"
     
-    # Generate small synthetic dataset for testing
-    np.random.seed(42)
-    test_data = pd.DataFrame({
-        'A': np.random.randint(0, 3, 100),
-        'B': np.random.randint(0, 2, 100),
-        'C': np.random.randint(0, 4, 100)
-    })
+    # Custom configuration (optional)
+    custom_config = {
+        'feature_grouping': {
+            'group_size': 10,  # Smaller groups for better BN learning
+            'strategy': 'correlation'
+        },
+        'bayesian_network': {
+            'structure_learning': 'naive_bayes',  # More stable for large datasets
+            'discretization_bins': 3  # Fewer bins for better learning
+        },
+        'anomaly_detection': {
+            'threshold_percentile': 5,  # Top 5% as anomalies
+            'threshold_method': 'percentile',
+            'aggregation_method': 'mean',
+            'use_zscore_transformation': True
+        },
+        'genetic_algorithm': {
+            'population_size': 100,  # Smaller population for faster optimization
+            'generations': 100,      # Fewer generations for faster optimization
+            'mutation_rate': 0.2,
+            'crossover_rate': 0.8
+        },
+        'use_genetic_optimization': True
+    }
     
-    # Make B somewhat dependent on A
-    test_data.loc[test_data['A'] == 0, 'B'] = np.random.choice([0, 1], 
-                                                               size=sum(test_data['A'] == 0), 
-                                                               p=[0.8, 0.2])
+    # Initialize and run system
+    system = BayesianAnomalyDetectionSystem(data_path, custom_config)
+    results = system.run_full_pipeline()
     
-    print(f"Test data shape: {test_data.shape}")
+    # Print analysis
+    print("\n📋 ANOMALY DETECTION ANALYSIS")
+    print("=" * 40)
+    analysis = system.get_anomaly_analysis()
     
-    # Quick BN learning
-    bn_model = learn_bn_structure(test_data)
-    bn_model = estimate_parameters(bn_model, test_data)
+    print(f"Total samples: {analysis['total_samples']}")
+    print(f"Anomalies detected: {analysis['total_anomalies']}")
+    print(f"Anomaly rate: {analysis['anomaly_percentage']:.2f}%")
+    print(f"Score range: [{analysis['anomaly_scores_stats']['min']:.4f}, {analysis['anomaly_scores_stats']['max']:.4f}]")
+    print(f"Mean score: {analysis['anomaly_scores_stats']['mean']:.4f}")
     
-    # Generate synthetic data
-    synthetic = sample_bn_data(bn_model, 100)
-    
-    # Quick evaluation
-    evaluation = compute_comprehensive_evaluation(test_data, synthetic)
-    print_evaluation_summary(evaluation)
-    
-    print("Quick test completed!")
-
+    if len(analysis['top_anomalies']) > 0:
+        print(f"\nTop anomalous samples (indices): {list(analysis['top_anomalies'][:5])}")
 
 if __name__ == "__main__":
-    import sys
-    
-    if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        run_quick_test()
-    else:
-        main()
+    main()
