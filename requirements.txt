@@ -1,0 +1,5 @@
+pandas
+numpy
+pgmpy
+deap
+scikit-learn
