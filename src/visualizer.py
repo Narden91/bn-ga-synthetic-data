@@ -12,8 +12,11 @@ class ResultVisualizer:
     def __init__(self):
         """Initialize the visualizer."""
         self.figures = []
-        self.results_dir = "results"
-        os.makedirs(self.results_dir, exist_ok=True)
+        self.base_results_dir = "results"
+        self.execution_results_dir: Optional[str] = None
+        os.makedirs(self.base_results_dir, exist_ok=True)
+        # Create execution folder immediately upon initialization
+        self.create_execution_folder()
         
     def create_visualizations(self, anomaly_scores: np.ndarray, 
                             anomaly_indices: np.ndarray,
@@ -27,6 +30,9 @@ class ResultVisualizer:
             likelihood_scores (pd.DataFrame): Original likelihood scores
         """
         print("     Creating visualizations...")
+        
+        # Ensure execution folder exists
+        self.get_results_dir()
         
         try:
             import matplotlib.pyplot as plt
@@ -60,9 +66,7 @@ class ResultVisualizer:
         """Automatically save all open figures."""
         try:
             import matplotlib.pyplot as plt
-            from datetime import datetime
             
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             figure_names = [
                 'anomaly_score_distribution',
                 'likelihood_heatmap',
@@ -76,11 +80,11 @@ class ResultVisualizer:
             for i, fig_num in enumerate(fig_nums):
                 fig = plt.figure(fig_num)
                 if i < len(figure_names):
-                    filename = f"{figure_names[i]}_{timestamp}.png"
+                    filename = f"{figure_names[i]}.png"
                 else:
-                    filename = f"plot_{i}_{timestamp}.png"
+                    filename = f"plot_{i}.png"
                 
-                filepath = os.path.join(self.results_dir, filename)
+                filepath = os.path.join(self.get_results_dir(), filename)
                 fig.savefig(filepath, dpi=300, bbox_inches='tight')
                 print(f"     Saved: {filename}")
             
@@ -427,17 +431,15 @@ class ResultVisualizer:
             
             # Use results directory by default
             if output_dir == "visualizations":
-                output_dir = self.results_dir
+                output_dir = self.get_results_dir()
             
             # Create output directory
             os.makedirs(output_dir, exist_ok=True)
             
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # Save all figures
+            # Save all figures without timestamp (folder is timestamped)
             for i, fig in enumerate(plt.get_fignums()):
                 plt.figure(fig)
-                filepath = os.path.join(output_dir, f"anomaly_detection_plot_{i+1}_{timestamp}.png")
+                filepath = os.path.join(output_dir, f"anomaly_detection_plot_{i+1}.png")
                 plt.savefig(filepath, dpi=300, bbox_inches='tight')
             
             print(f"     Visualizations saved to {output_dir}/")
@@ -522,7 +524,7 @@ class ResultVisualizer:
     def export_results(self, anomaly_scores: np.ndarray, 
                       anomaly_indices: np.ndarray,
                       likelihood_scores: pd.DataFrame,
-                      output_file: str = None) -> None:
+                      output_file: Optional[str] = None) -> None:
         """
         Export results to CSV file.
         
@@ -533,12 +535,9 @@ class ResultVisualizer:
             output_file (str): Output file path
         """
         try:
-            from datetime import datetime
-            
-            # Default filename with timestamp
+            # Default filename without timestamp (since folder is timestamped)
             if output_file is None:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_file = os.path.join(self.results_dir, f"anomaly_results_{timestamp}.csv")
+                output_file = os.path.join(self.get_results_dir(), "anomaly_results.csv")
             
             # Create results DataFrame
             results_df = pd.DataFrame({
@@ -557,3 +556,41 @@ class ResultVisualizer:
             
         except Exception as e:
             print(f"     Error exporting results: {str(e)}")
+    
+    def create_execution_folder(self):
+        """
+        Create a timestamped folder for this execution's results.
+        
+        Returns:
+            str: Path to the created execution folder
+        """
+        from datetime import datetime
+        
+        # Use microseconds to avoid conflicts in rapid executions
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # Remove last 3 digits of microseconds
+        self.execution_results_dir = os.path.join(self.base_results_dir, f"execution_{timestamp}")
+        os.makedirs(self.execution_results_dir, exist_ok=True)
+        
+        print(f"     Created results folder: {self.execution_results_dir}")
+        return self.execution_results_dir
+    
+    def get_results_dir(self) -> str:
+        """
+        Get the current execution results directory.
+        
+        Returns:
+            str: Path to the execution results directory
+        """
+        if self.execution_results_dir is None:
+            self.create_execution_folder()
+        assert self.execution_results_dir is not None  # for type checker
+        return self.execution_results_dir
+    
+    def get_execution_folder_path(self) -> str:
+        """
+        Public method to get the execution folder path for use by other components.
+        
+        Returns:
+            str: Path to the execution results directory
+        """
+        return self.get_results_dir()

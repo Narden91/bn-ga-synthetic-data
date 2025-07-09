@@ -149,6 +149,10 @@ class BayesianAnomalyDetectionSystem:
         # Step 7: GA Optimization (Optional)
         if self.config.get('use_genetic_optimization', True):
             print("🧬 Step 7: Optimizing with Genetic Algorithm...")
+            
+            # Set the GA optimizer to use the same execution folder
+            self.genetic_optimizer.set_results_dir(self.visualizer.get_execution_folder_path())
+            
             optimized_params = self.genetic_optimizer.optimize(
                 self.likelihood_scores, self.processed_data
             )
@@ -216,10 +220,8 @@ class BayesianAnomalyDetectionSystem:
             import json
             from datetime import datetime
             
-            results_dir = "results"
-            os.makedirs(results_dir, exist_ok=True)
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Use the visualizer's execution folder instead of creating separate timestamped files
+            results_dir = self.visualizer.get_execution_folder_path()
             
             # 1. Save main results
             self.visualizer.export_results(
@@ -236,23 +238,23 @@ class BayesianAnomalyDetectionSystem:
                 self.feature_groups
             )
             
-            report_file = os.path.join(results_dir, f"summary_report_{timestamp}.txt")
+            report_file = os.path.join(results_dir, "summary_report.txt")
             with open(report_file, 'w') as f:
                 f.write(summary_report)
             print(f"     Summary report saved to {report_file}")
             
             # 3. Save configuration
-            config_file = os.path.join(results_dir, f"pipeline_config_{timestamp}.json")
+            config_file = os.path.join(results_dir, "pipeline_config.json")
             with open(config_file, 'w') as f:
                 json.dump(self.config, f, indent=2)
             print(f"     Configuration saved to {config_file}")
             
             # 4. Save feature groups
-            groups_file = os.path.join(results_dir, f"feature_groups_{timestamp}.json")
+            groups_file = os.path.join(results_dir, "feature_groups.json")
             group_data = {
                 'groups': self.feature_groups,
                 'group_info': self.feature_grouper.get_group_info(),
-                'timestamp': timestamp
+                'execution_timestamp': os.path.basename(results_dir)
             }
             with open(groups_file, 'w') as f:
                 json.dump(group_data, f, indent=2)
@@ -261,7 +263,7 @@ class BayesianAnomalyDetectionSystem:
             # 5. Save analysis summary
             try:
                 analysis = self.get_anomaly_analysis()
-                analysis_file = os.path.join(results_dir, f"anomaly_analysis_{timestamp}.json")
+                analysis_file = os.path.join(results_dir, "anomaly_analysis.json")
                 with open(analysis_file, 'w') as f:
                     # Convert numpy types to native Python types for JSON serialization
                     analysis_serializable = self._make_json_serializable(analysis)
@@ -271,33 +273,34 @@ class BayesianAnomalyDetectionSystem:
                 print(f"     Warning: Could not save analysis summary: {str(e)}")
             
             # 6. Create master summary file
+            execution_timestamp = os.path.basename(results_dir)
             master_summary = {
-                'timestamp': timestamp,
+                'execution_timestamp': execution_timestamp,
                 'data_info': {
-                    'original_shape': list(self.raw_data.shape),
-                    'processed_shape': list(self.processed_data.shape),
-                    'n_feature_groups': len(self.feature_groups)
+                    'original_shape': list(self.raw_data.shape) if self.raw_data is not None else None,
+                    'processed_shape': list(self.processed_data.shape) if self.processed_data is not None else None,
+                    'n_feature_groups': len(self.feature_groups) if self.feature_groups is not None else 0
                 },
                 'results': {
-                    'total_anomalies': len(self.anomalies),
-                    'anomaly_rate': len(self.anomalies) / len(self.processed_data) * 100,
-                    'threshold_used': float(self.anomaly_detector.threshold) if hasattr(self.anomaly_detector, 'threshold') else None
+                    'total_anomalies': len(self.anomalies) if self.anomalies is not None else 0,
+                    'anomaly_rate': (len(self.anomalies) / len(self.processed_data) * 100) if (self.anomalies is not None and self.processed_data is not None) else 0,
+                    'threshold_used': float(self.anomaly_detector.threshold) if (hasattr(self.anomaly_detector, 'threshold') and self.anomaly_detector.threshold is not None) else None
                 },
                 'files_created': {
-                    'results_csv': f"anomaly_results_{timestamp}.csv",
-                    'summary_report': f"summary_report_{timestamp}.txt",
-                    'config': f"pipeline_config_{timestamp}.json",
-                    'feature_groups': f"feature_groups_{timestamp}.json",
-                    'analysis': f"anomaly_analysis_{timestamp}.json"
+                    'results_csv': "anomaly_results.csv",
+                    'summary_report': "summary_report.txt",
+                    'config': "pipeline_config.json",
+                    'feature_groups': "feature_groups.json",
+                    'analysis': "anomaly_analysis.json"
                 }
             }
             
             # Add GA results if available
-            if hasattr(self.genetic_optimizer, 'best_fitness') and self.genetic_optimizer.best_fitness is not None:
+            if hasattr(self.genetic_optimizer, 'best_individual') and self.genetic_optimizer.best_individual is not None:
                 ga_summary = self.genetic_optimizer.get_optimization_summary()
                 master_summary['genetic_algorithm'] = self._make_json_serializable(ga_summary)
             
-            master_file = os.path.join(results_dir, f"master_summary_{timestamp}.json")
+            master_file = os.path.join(results_dir, "master_summary.json")
             with open(master_file, 'w') as f:
                 json.dump(master_summary, f, indent=2)
             print(f"     Master summary saved to {master_file}")
@@ -313,9 +316,9 @@ class BayesianAnomalyDetectionSystem:
             return [self._make_json_serializable(item) for item in obj]
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
-        elif isinstance(obj, (np.int64, np.int32, np.int16, np.int8)):
+        elif isinstance(obj, np.integer):
             return int(obj)
-        elif isinstance(obj, (np.float64, np.float32)):
+        elif isinstance(obj, np.floating):
             return float(obj)
         elif isinstance(obj, np.bool_):
             return bool(obj)
@@ -370,11 +373,15 @@ def main():
     if len(analysis['top_anomalies']) > 0:
         print(f"\nTop anomalous samples (indices): {list(analysis['top_anomalies'][:5])}")
     
-    print(f"\n📁 All results saved to: results/")
+    # Show the specific execution folder where results were saved
+    execution_folder = system.visualizer.get_execution_folder_path()
+    print(f"\n📁 All results saved to: {execution_folder}")
     print("   - CSV with anomaly scores and classifications")
-    print("   - PNG plots showing distributions and evolution")
+    print("   - PNG plots showing distributions and timelines") 
     print("   - JSON files with parameters and summaries")
     print("   - Text report with detailed analysis")
+    print("   - Genetic algorithm optimization results (if enabled)")
+    print("   - Master summary file with execution metadata")
 
 if __name__ == "__main__":
     main()
