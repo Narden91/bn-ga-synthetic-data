@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Optional, Tuple
 import warnings
+import os
 
 class ResultVisualizer:
     """
@@ -11,6 +12,8 @@ class ResultVisualizer:
     def __init__(self):
         """Initialize the visualizer."""
         self.figures = []
+        self.results_dir = "results"
+        os.makedirs(self.results_dir, exist_ok=True)
         
     def create_visualizations(self, anomaly_scores: np.ndarray, 
                             anomaly_indices: np.ndarray,
@@ -28,10 +31,14 @@ class ResultVisualizer:
         try:
             import matplotlib.pyplot as plt
             import seaborn as sns
+            from datetime import datetime
             
             # Set style
             plt.style.use('default')
             sns.set_palette("husl")
+            
+            # Clear any existing figures
+            plt.close('all')
             
             # Create multiple visualizations
             self._plot_anomaly_score_distribution(anomaly_scores, anomaly_indices)
@@ -39,12 +46,46 @@ class ResultVisualizer:
             self._plot_anomaly_timeline(anomaly_scores, anomaly_indices)
             self._plot_feature_group_contributions(likelihood_scores, anomaly_indices)
             
+            # Auto-save all figures
+            self._auto_save_figures()
+            
             print("     ✅ Visualizations created successfully")
             
         except ImportError:
             print("     ⚠️  Matplotlib/Seaborn not available, skipping visualizations")
         except Exception as e:
             print(f"     ❌ Visualization failed: {str(e)}")
+    
+    def _auto_save_figures(self):
+        """Automatically save all open figures."""
+        try:
+            import matplotlib.pyplot as plt
+            from datetime import datetime
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            figure_names = [
+                'anomaly_score_distribution',
+                'likelihood_heatmap',
+                'anomaly_timeline',
+                'feature_group_contributions'
+            ]
+            
+            # Get all open figures
+            fig_nums = plt.get_fignums()
+            
+            for i, fig_num in enumerate(fig_nums):
+                fig = plt.figure(fig_num)
+                if i < len(figure_names):
+                    filename = f"{figure_names[i]}_{timestamp}.png"
+                else:
+                    filename = f"plot_{i}_{timestamp}.png"
+                
+                filepath = os.path.join(self.results_dir, filename)
+                fig.savefig(filepath, dpi=300, bbox_inches='tight')
+                print(f"     Saved: {filename}")
+            
+        except Exception as e:
+            print(f"     Error auto-saving figures: {str(e)}")
     
     def _plot_anomaly_score_distribution(self, anomaly_scores: np.ndarray, 
                                        anomaly_indices: np.ndarray) -> None:
@@ -382,15 +423,22 @@ class ResultVisualizer:
         try:
             import os
             import matplotlib.pyplot as plt
+            from datetime import datetime
+            
+            # Use results directory by default
+            if output_dir == "visualizations":
+                output_dir = self.results_dir
             
             # Create output directory
             os.makedirs(output_dir, exist_ok=True)
             
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
             # Save all figures
             for i, fig in enumerate(plt.get_fignums()):
                 plt.figure(fig)
-                plt.savefig(f"{output_dir}/anomaly_detection_plot_{i+1}.png", 
-                           dpi=300, bbox_inches='tight')
+                filepath = os.path.join(output_dir, f"anomaly_detection_plot_{i+1}_{timestamp}.png")
+                plt.savefig(filepath, dpi=300, bbox_inches='tight')
             
             print(f"     Visualizations saved to {output_dir}/")
             
@@ -474,7 +522,7 @@ class ResultVisualizer:
     def export_results(self, anomaly_scores: np.ndarray, 
                       anomaly_indices: np.ndarray,
                       likelihood_scores: pd.DataFrame,
-                      output_file: str = "anomaly_results.csv") -> None:
+                      output_file: str = None) -> None:
         """
         Export results to CSV file.
         
@@ -485,6 +533,13 @@ class ResultVisualizer:
             output_file (str): Output file path
         """
         try:
+            from datetime import datetime
+            
+            # Default filename with timestamp
+            if output_file is None:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_file = os.path.join(self.results_dir, f"anomaly_results_{timestamp}.csv")
+            
             # Create results DataFrame
             results_df = pd.DataFrame({
                 'sample_index': np.arange(len(anomaly_scores)),

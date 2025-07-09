@@ -168,6 +168,10 @@ class BayesianAnomalyDetectionSystem:
             self.anomaly_scores, self.anomalies, self.likelihood_scores
         )
         
+        # Step 9: Save comprehensive results
+        print("💾 Step 9: Saving results...")
+        self._save_comprehensive_results()
+        
         print("✅ Pipeline completed successfully!")
         print("=" * 60)
         
@@ -204,6 +208,119 @@ class BayesianAnomalyDetectionSystem:
         }
         
         return analysis
+    
+    def _save_comprehensive_results(self):
+        """Save all results to the results folder."""
+        try:
+            import os
+            import json
+            from datetime import datetime
+            
+            results_dir = "results"
+            os.makedirs(results_dir, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # 1. Save main results
+            self.visualizer.export_results(
+                self.anomaly_scores, 
+                self.anomalies, 
+                self.likelihood_scores
+            )
+            
+            # 2. Save summary report
+            summary_report = self.visualizer.create_summary_report(
+                self.anomaly_scores,
+                self.anomalies,
+                self.likelihood_scores,
+                self.feature_groups
+            )
+            
+            report_file = os.path.join(results_dir, f"summary_report_{timestamp}.txt")
+            with open(report_file, 'w') as f:
+                f.write(summary_report)
+            print(f"     Summary report saved to {report_file}")
+            
+            # 3. Save configuration
+            config_file = os.path.join(results_dir, f"pipeline_config_{timestamp}.json")
+            with open(config_file, 'w') as f:
+                json.dump(self.config, f, indent=2)
+            print(f"     Configuration saved to {config_file}")
+            
+            # 4. Save feature groups
+            groups_file = os.path.join(results_dir, f"feature_groups_{timestamp}.json")
+            group_data = {
+                'groups': self.feature_groups,
+                'group_info': self.feature_grouper.get_group_info(),
+                'timestamp': timestamp
+            }
+            with open(groups_file, 'w') as f:
+                json.dump(group_data, f, indent=2)
+            print(f"     Feature groups saved to {groups_file}")
+            
+            # 5. Save analysis summary
+            try:
+                analysis = self.get_anomaly_analysis()
+                analysis_file = os.path.join(results_dir, f"anomaly_analysis_{timestamp}.json")
+                with open(analysis_file, 'w') as f:
+                    # Convert numpy types to native Python types for JSON serialization
+                    analysis_serializable = self._make_json_serializable(analysis)
+                    json.dump(analysis_serializable, f, indent=2)
+                print(f"     Analysis summary saved to {analysis_file}")
+            except Exception as e:
+                print(f"     Warning: Could not save analysis summary: {str(e)}")
+            
+            # 6. Create master summary file
+            master_summary = {
+                'timestamp': timestamp,
+                'data_info': {
+                    'original_shape': list(self.raw_data.shape),
+                    'processed_shape': list(self.processed_data.shape),
+                    'n_feature_groups': len(self.feature_groups)
+                },
+                'results': {
+                    'total_anomalies': len(self.anomalies),
+                    'anomaly_rate': len(self.anomalies) / len(self.processed_data) * 100,
+                    'threshold_used': float(self.anomaly_detector.threshold) if hasattr(self.anomaly_detector, 'threshold') else None
+                },
+                'files_created': {
+                    'results_csv': f"anomaly_results_{timestamp}.csv",
+                    'summary_report': f"summary_report_{timestamp}.txt",
+                    'config': f"pipeline_config_{timestamp}.json",
+                    'feature_groups': f"feature_groups_{timestamp}.json",
+                    'analysis': f"anomaly_analysis_{timestamp}.json"
+                }
+            }
+            
+            # Add GA results if available
+            if hasattr(self.genetic_optimizer, 'best_fitness') and self.genetic_optimizer.best_fitness is not None:
+                ga_summary = self.genetic_optimizer.get_optimization_summary()
+                master_summary['genetic_algorithm'] = self._make_json_serializable(ga_summary)
+            
+            master_file = os.path.join(results_dir, f"master_summary_{timestamp}.json")
+            with open(master_file, 'w') as f:
+                json.dump(master_summary, f, indent=2)
+            print(f"     Master summary saved to {master_file}")
+            
+        except Exception as e:
+            print(f"     Error saving comprehensive results: {str(e)}")
+    
+    def _make_json_serializable(self, obj):
+        """Convert numpy types to native Python types for JSON serialization."""
+        if isinstance(obj, dict):
+            return {key: self._make_json_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._make_json_serializable(item) for item in obj]
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (np.int64, np.int32, np.int16, np.int8)):
+            return int(obj)
+        elif isinstance(obj, (np.float64, np.float32)):
+            return float(obj)
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        else:
+            return obj
 
 def main():
     """Main execution function."""
@@ -227,8 +344,8 @@ def main():
             'use_zscore_transformation': True
         },
         'genetic_algorithm': {
-            'population_size': 100,  # Smaller population for faster optimization
-            'generations': 100,      # Fewer generations for faster optimization
+            'population_size': 50,   # Reasonable population for good optimization
+            'generations': 50,       # Sufficient generations for convergence
             'mutation_rate': 0.2,
             'crossover_rate': 0.8
         },
@@ -252,6 +369,12 @@ def main():
     
     if len(analysis['top_anomalies']) > 0:
         print(f"\nTop anomalous samples (indices): {list(analysis['top_anomalies'][:5])}")
+    
+    print(f"\n📁 All results saved to: results/")
+    print("   - CSV with anomaly scores and classifications")
+    print("   - PNG plots showing distributions and evolution")
+    print("   - JSON files with parameters and summaries")
+    print("   - Text report with detailed analysis")
 
 if __name__ == "__main__":
     main()

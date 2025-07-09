@@ -208,3 +208,4 @@ __marimo__/
 
 # ignore data folder
 data/
+results/
