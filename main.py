@@ -16,6 +16,7 @@ from src.feature_grouper import FeatureGrouper
 from src.bayesian_network import BayesianNetworkLearner
 from src.anomaly_detector import AnomalyDetector
 from src.genetic_optimizer import GeneticOptimizer
+from src.cmaes_optimizer import CMAESOptimizer
 from src.visualizer import ResultVisualizer
 
 class BayesianAnomalyDetectionSystem:
@@ -41,6 +42,7 @@ class BayesianAnomalyDetectionSystem:
         self.bn_learner = BayesianNetworkLearner(self.config['bayesian_network'])
         self.anomaly_detector = AnomalyDetector(self.config['anomaly_detection'])
         self.genetic_optimizer = GeneticOptimizer(self.config['genetic_algorithm'])
+        self.cmaes_optimizer = CMAESOptimizer(self.config['cmaes_algorithm'])
         self.visualizer = ResultVisualizer()
         
         # Data storage
@@ -97,6 +99,15 @@ class BayesianAnomalyDetectionSystem:
                 'generations': 100,
                 'mutation_rate': 0.1,
                 'crossover_rate': 0.8
+            },
+            'cmaes_algorithm': {
+                'population_size': None,  # Let CMA-ES decide
+                'generations': 100,
+                'initial_sigma': 0.3
+            },
+            'optimization': {
+                'algorithm': 'genetic',  # 'genetic' or 'cmaes'
+                'use_optimization': True
             }
         }
     
@@ -146,18 +157,36 @@ class BayesianAnomalyDetectionSystem:
         )
         print(f"   Detected {len(self.anomalies)} anomalies")
         
-        # Step 7: GA Optimization (Optional)
-        if self.config.get('use_genetic_optimization', True):
-            print("🧬 Step 7: Optimizing with Genetic Algorithm...")
+        # Step 7: Optimization (Optional)
+        if self.config['optimization'].get('use_optimization', True):
+            optimizer_type = self.config['optimization'].get('algorithm', 'genetic')
             
-            # Set the GA optimizer to use the same execution folder
-            self.genetic_optimizer.set_results_dir(self.visualizer.get_execution_folder_path())
-            
-            optimized_params = self.genetic_optimizer.optimize(
-                self.likelihood_scores, self.processed_data
-            )
-            print(f"   Optimized threshold percentile: {optimized_params['threshold_percentile']:.2f}%")
-            print(f"   Optimized aggregation method: {optimized_params['aggregation_method']}")
+            if optimizer_type == 'genetic':
+                print("🧬 Step 7: Optimizing with Genetic Algorithm...")
+                
+                # Set the GA optimizer to use the same execution folder
+                self.genetic_optimizer.set_results_dir(self.visualizer.get_execution_folder_path())
+                
+                optimized_params = self.genetic_optimizer.optimize(
+                    self.likelihood_scores, self.processed_data
+                )
+                print(f"   Optimized threshold percentile: {optimized_params['threshold_percentile']:.2f}%")
+                print(f"   Optimized aggregation method: {optimized_params['aggregation_method']}")
+                
+            elif optimizer_type == 'cmaes':
+                print("🎯 Step 7: Optimizing with CMA-ES...")
+                
+                # Set the CMA-ES optimizer to use the same execution folder
+                self.cmaes_optimizer.set_results_dir(self.visualizer.get_execution_folder_path())
+                
+                optimized_params = self.cmaes_optimizer.optimize(
+                    self.likelihood_scores, self.processed_data
+                )
+                print(f"   Optimized threshold percentile: {optimized_params['threshold_percentile']:.2f}%")
+                print(f"   Optimized aggregation method: {optimized_params['aggregation_method']}")
+                
+            else:
+                raise ValueError(f"Unknown optimizer type: {optimizer_type}. Use 'genetic' or 'cmaes'.")
             
             # Re-detect with optimized parameters
             self.anomaly_detector.update_parameters(optimized_params)
@@ -295,10 +324,21 @@ class BayesianAnomalyDetectionSystem:
                 }
             }
             
-            # Add GA results if available
-            if hasattr(self.genetic_optimizer, 'best_individual') and self.genetic_optimizer.best_individual is not None:
+            # Add optimization results if available
+            optimizer_type = self.config['optimization'].get('algorithm', 'genetic')
+            
+            if optimizer_type == 'genetic' and hasattr(self.genetic_optimizer, 'best_individual') and self.genetic_optimizer.best_individual is not None:
                 ga_summary = self.genetic_optimizer.get_optimization_summary()
-                master_summary['genetic_algorithm'] = self._make_json_serializable(ga_summary)
+                master_summary['optimization'] = {
+                    'algorithm': 'genetic',
+                    'results': self._make_json_serializable(ga_summary)
+                }
+            elif optimizer_type == 'cmaes' and hasattr(self.cmaes_optimizer, 'best_solution') and self.cmaes_optimizer.best_solution is not None:
+                cmaes_summary = self.cmaes_optimizer.get_optimization_summary()
+                master_summary['optimization'] = {
+                    'algorithm': 'cmaes',
+                    'results': self._make_json_serializable(cmaes_summary)
+                }
             
             master_file = os.path.join(results_dir, "master_summary.json")
             with open(master_file, 'w') as f:
@@ -325,12 +365,13 @@ class BayesianAnomalyDetectionSystem:
         else:
             return obj
 
+
 def main():
     """Main execution function."""
     # Configuration
     data_path = "data/Dati_wallbox_aggregati.csv"
     
-    # Custom configuration (optional)
+    # Custom configuration - CMA-ES Example
     custom_config = {
         'feature_grouping': {
             'group_size': 10,  # Smaller groups for better BN learning
@@ -347,12 +388,20 @@ def main():
             'use_zscore_transformation': True
         },
         'genetic_algorithm': {
-            'population_size': 50,   # Reasonable population for good optimization
-            'generations': 50,       # Sufficient generations for convergence
+            'population_size': 100,   # Reasonable population for good optimization
+            'generations': 100,       # Sufficient generations for convergence
             'mutation_rate': 0.2,
-            'crossover_rate': 0.8
+            'crossover_rate': 0.7
         },
-        'use_genetic_optimization': True
+        'cmaes_algorithm': {
+            'population_size': None,  # Let CMA-ES decide
+            'generations': 150,       # More iterations for enhanced exploration
+            'initial_sigma': 0.8      # Higher initial exploration for better diversity
+        },
+        'optimization': {
+            'algorithm': 'cmaes',    # 'genetic' or 'cmaes'
+            'use_optimization': True
+        }
     }
     
     # Initialize and run system
@@ -375,12 +424,13 @@ def main():
     
     # Show the specific execution folder where results were saved
     execution_folder = system.visualizer.get_execution_folder_path()
+    optimizer_type = system.config['optimization'].get('algorithm', 'genetic')
     print(f"\n📁 All results saved to: {execution_folder}")
     print("   - CSV with anomaly scores and classifications")
     print("   - PNG plots showing distributions and timelines") 
     print("   - JSON files with parameters and summaries")
     print("   - Text report with detailed analysis")
-    print("   - Genetic algorithm optimization results (if enabled)")
+    print(f"   - {optimizer_type.upper()} optimization results (if enabled)")
     print("   - Master summary file with execution metadata")
 
 if __name__ == "__main__":
