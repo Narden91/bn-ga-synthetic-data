@@ -399,7 +399,7 @@ def main():
             'initial_sigma': 0.8      # Higher initial exploration for better diversity
         },
         'optimization': {
-            'algorithm': 'cmaes',    # 'genetic' or 'cmaes'
+            'algorithm': 'genetic',    # 'genetic' or 'cmaes'
             'use_optimization': True
         }
     }

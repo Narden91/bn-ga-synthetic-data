@@ -254,61 +254,167 @@ class GeneticOptimizer:
     def _calculate_fitness(self, anomaly_scores: np.ndarray, 
                            anomaly_indices: np.ndarray, params: Dict) -> Tuple[float, Dict]:
         """
-        Refactored fitness calculation to promote balanced, robust solutions.
+        Improved fitness function for anomaly detection optimization.
         
-        The fitness score (0-100) is a weighted sum of four key components:
-        1. Anomaly Rate Quality (30 pts): Rewards an anomaly rate near a target using a Gaussian curve.
-        2. Score Separation Quality (40 pts): Measures separation using Cohen's d, rewarding meaningful
-           separation with diminishing returns via a sigmoid function.
-        3. Distribution Quality (20 pts): Rewards solutions where non-anomalous scores form a coherent,
-           statistically "normal-like" group, assessed via the Shapiro-Wilk test p-value.
-        4. Parameter Simplicity Bonus (10 pts): A small nudge favoring stable and interpretable parameters.
+        This simplified, robust fitness function focuses on three core aspects:
+        1. Anomaly Detection Quality (60 pts): Combined rate and separation quality with multi-modal targets
+        2. Statistical Coherence (30 pts): Robust quality metrics for the detection
+        3. Diversity Bonus (10 pts): Prevents premature convergence by rewarding exploration
+        
+        The function is designed to be more robust against premature convergence and
+        specifically tailored for anomaly detection effectiveness.
         """
         components = {
-            'rate_score': 0.0, 'separation_score': 0.0, 
-            'distribution_score': 0.0, 'simplicity_bonus': 0.0
+            'detection_quality': 0.0,
+            'statistical_coherence': 0.0, 
+            'diversity_bonus': 0.0
         }
+        
         num_samples = len(anomaly_scores)
         num_anomalies = len(anomaly_indices)
 
-        if num_anomalies == 0 or num_anomalies >= num_samples / 2:
+        # Early exit for degenerate cases
+        if num_anomalies == 0 or num_anomalies >= num_samples * 0.5:
             return 0.0, components
 
-        # Component 1: Anomaly Rate Quality (Max 30 points)
         anomaly_rate = (num_anomalies / num_samples) * 100
-        target_rate, rate_spread = 4.0, 2.0
-        components['rate_score'] = 30 * np.exp(-0.5 * ((anomaly_rate - target_rate) / rate_spread) ** 2)
-
         normal_indices = np.setdiff1d(np.arange(num_samples), anomaly_indices)
         anomaly_values = anomaly_scores[anomaly_indices]
         normal_values = anomaly_scores[normal_indices]
 
-        # Component 2: Score Separation Quality (Max 40 points)
-        if len(normal_values) > 1 and len(anomaly_values) > 1:
+        # Component 1: Anomaly Detection Quality (60 points)
+        # This combines rate appropriateness with separation quality
+        detection_score = 0.0
+        
+        # 1a. Multi-modal rate targets (30 points)
+        # Primary target: 3-5% (ideal for most anomaly detection)
+        # Secondary targets: 1-2% (strict) and 6-8% (relaxed)
+        primary_score = 25 * np.exp(-0.5 * ((anomaly_rate - 4.0) / 1.5) ** 2)
+        secondary_score = 20 * np.exp(-0.5 * ((anomaly_rate - 1.8) / 0.8) ** 2)
+        tertiary_score = 15 * np.exp(-0.5 * ((anomaly_rate - 7.0) / 1.5) ** 2)
+        rate_quality = max(primary_score, secondary_score, tertiary_score)
+        
+        # 1b. Enhanced separation quality (30 points)
+        separation_quality = 0.0
+        if len(normal_values) > 2 and len(anomaly_values) > 1:
             mean_anomaly, std_anomaly = np.mean(anomaly_values), np.std(anomaly_values)
             mean_normal, std_normal = np.mean(normal_values), np.std(normal_values)
             
-            pooled_std = np.sqrt(((num_anomalies - 1) * std_anomaly**2 + (len(normal_values) - 1) * std_normal**2) / (num_samples - 2))
+            # Use robust pooled standard deviation
+            pooled_std = np.sqrt(((num_anomalies - 1) * std_anomaly**2 + 
+                                (len(normal_values) - 1) * std_normal**2) / (num_samples - 2))
+            
             if pooled_std > 1e-6:
-                cohens_d = (mean_anomaly - mean_normal) / pooled_std
-                k, offset = 4.0, 0.5
-                components['separation_score'] = 40 / (1 + np.exp(-k * (cohens_d - offset)))
+                cohens_d = abs(mean_anomaly - mean_normal) / pooled_std
+                
+                # Non-linear scaling that rewards strong separation
+                if cohens_d >= 0.8:
+                    # Strong separation gets high reward with bonus for excellence
+                    separation_quality = 25 + 5 * (1 - np.exp(-(cohens_d - 0.8) * 1.5))
+                else:
+                    # Progressive reward for moderate separation
+                    separation_quality = 30 * (cohens_d / (cohens_d + 0.5))
+                
+                # Additional overlap penalty/bonus
+                overlap_coeff = self._calculate_overlap_coefficient(normal_values, anomaly_values)
+                separation_quality += (1 - overlap_coeff) * 5
+        
+        detection_score = min(60, rate_quality + separation_quality)
+        components['detection_quality'] = detection_score
 
-        # Component 3: Distribution Quality (Max 20 points)
-        if len(normal_values) > 3:
-            _, p_value = stats.shapiro(normal_values)
-            components['distribution_score'] = p_value * 20
+        # Component 2: Statistical Coherence (30 points)
+        # Measures overall quality and robustness of the detection
+        coherence_score = 0.0
+        
+        # 2a. Normal distribution quality (15 points)
+        if len(normal_values) > 5:
+            # Use multiple statistical tests for robustness
+            try:
+                # Shapiro-Wilk test for normality
+                _, shapiro_p = stats.shapiro(normal_values[:5000])  # Limit for large datasets
+                shapiro_score = min(10, shapiro_p * 15)
+                
+                # Anderson-Darling test (more sensitive)
+                try:
+                    ad_result = stats.anderson(normal_values, dist='norm')
+                    ad_stat = ad_result.statistic
+                    ad_critical = ad_result.critical_values
+                    ad_score = 5 if ad_stat < ad_critical[2] else 0  # 5% significance level
+                except:
+                    ad_score = 0
+                
+                coherence_score += shapiro_score + ad_score
+            except:
+                coherence_score += 5  # Fallback score
+        
+        # 2b. Anomaly consistency (15 points)
+        if len(anomaly_values) > 1 and len(normal_values) > 0:
+            # Reward consistent anomaly scores (low variance relative to separation)
+            relative_anomaly_std = std_anomaly / (abs(float(mean_anomaly) - float(mean_normal)) + 1e-6)
+            consistency_score = 15 * np.exp(-relative_anomaly_std)
+            coherence_score += min(15, consistency_score)
+        
+        components['statistical_coherence'] = min(30, coherence_score)
 
-        # Component 4: Parameter Simplicity Bonus (Max 10 points)
-        bonus = 0
-        if params['aggregation_method'] in ['mean', 'median']: bonus += 3
-        if params['threshold_method'] == 'percentile': bonus += 2
-        if params['use_zscore_transformation']: bonus += 2
-        if 2 <= params['threshold_percentile'] <= 8: bonus += 3
-        components['simplicity_bonus'] = min(10, bonus)
+        # Component 3: Diversity Bonus (10 points)
+        # Encourages exploration and prevents premature convergence
+        diversity_score = 0.0
+        
+        # 3a. Parameter diversity reward
+        diversity_factors = []
+        
+        # Reward diverse aggregation methods
+        if params['aggregation_method'] in ['min', 'weighted', 'sum']:
+            diversity_factors.append(1.5)
+        elif params['aggregation_method'] in ['mean', 'median']:
+            diversity_factors.append(1.0)
+        else:
+            diversity_factors.append(0.5)
+        
+        # Reward balanced threshold approaches
+        if params['threshold_method'] == 'percentile':
+            perc = params.get('threshold_percentile', 5)
+            if 3 <= perc <= 7:  # Sweet spot
+                diversity_factors.append(1.2)
+            else:
+                diversity_factors.append(0.8)
+        
+        # Z-score transformation bonus
+        if params.get('use_zscore_transformation', True):
+            diversity_factors.append(1.1)
+        
+        diversity_score = min(10, float(np.mean(diversity_factors) * 8))
+        components['diversity_bonus'] = diversity_score
 
-        total_fitness = sum(components.values()) + random.uniform(-0.01, 0.01)
-        return max(0, min(100, total_fitness)), components
+        # Final fitness calculation with anti-convergence noise
+        total_fitness = (components['detection_quality'] + 
+                        components['statistical_coherence'] + 
+                        components['diversity_bonus'])
+        
+        # Add small random noise to prevent fitness plateaus
+        convergence_prevention = random.uniform(-0.15, 0.15)
+        
+        return float(max(0.0, min(100.0, total_fitness + convergence_prevention))), components
+    
+    def _calculate_overlap_coefficient(self, normal_values: np.ndarray, anomaly_values: np.ndarray) -> float:
+        """Calculate overlap coefficient between normal and anomaly score distributions."""
+        try:
+            # Use histogram-based approach for overlap calculation
+            all_values = np.concatenate([normal_values, anomaly_values])
+            min_val, max_val = np.min(all_values), np.max(all_values)
+            
+            if max_val - min_val < 1e-6:
+                return 1.0  # Complete overlap
+            
+            bins = np.linspace(min_val, max_val, 30)
+            normal_hist, _ = np.histogram(normal_values, bins=bins, density=True)
+            anomaly_hist, _ = np.histogram(anomaly_values, bins=bins, density=True)
+            
+            # Calculate overlap as minimum of densities
+            overlap = np.sum(np.minimum(normal_hist, anomaly_hist)) / len(bins)
+            return min(1.0, max(0.0, overlap))
+        except:
+            return 0.5  # Default moderate overlap
     
     def _find_convergence_generation(self) -> int:
         """Finds the generation where the best fitness score plateaus."""
@@ -373,15 +479,16 @@ class GeneticOptimizer:
             ax2 = axes[1]
             if self.best_individual and hasattr(self.best_individual, 'components'):
                 components = self.best_individual.components
-                names = ['Rate', 'Separation', 'Distribution', 'Simplicity']
-                values = [components.get(k, 0) for k in ['rate_score', 'separation_score', 'distribution_score', 'simplicity_bonus']]
-                colors = ['#440154', '#31688e', '#35b779', '#fde725'][:len(names)]
+                names = ['Detection\nQuality', 'Statistical\nCoherence', 'Diversity\nBonus']
+                values = [components.get(k, 0) for k in ['detection_quality', 'statistical_coherence', 'diversity_bonus']]
+                colors = ['#e74c3c', '#3498db', '#2ecc71'][:len(names)]
                 bars = ax2.bar(names, values, color=colors, alpha=0.8)
                 ax2.bar_label(bars, fmt='%.1f')
                 ax2.set_title('Best Individual Fitness Breakdown', fontsize=14, fontweight='bold')
                 ax2.set_xlabel('Fitness Components')
                 ax2.set_ylabel('Component Score')
                 ax2.grid(True, axis='y', alpha=0.3)
+                ax2.set_ylim(0, max(70, max(values) * 1.1))  # Adjust scale for new components
             else:
                 ax2.text(0.5, 0.5, 'No fitness breakdown available', ha='center', va='center', transform=ax2.transAxes)
                 ax2.set_title('Best Individual Fitness Breakdown', fontsize=14, fontweight='bold')

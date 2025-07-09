@@ -226,36 +226,68 @@ class ResultVisualizer:
         try:
             import matplotlib.pyplot as plt
             
-            fig, ax = plt.subplots(figsize=(14, 6))
+            # Create larger figure with better aspect ratio
+            fig, ax = plt.subplots(figsize=(16, 8))
             
-            # Plot all scores
+            # Plot all scores with improved styling
             sample_indices = np.arange(len(anomaly_scores))
-            ax.plot(sample_indices, anomaly_scores, 'b-', alpha=0.6, linewidth=1, label='Anomaly Scores')
+            ax.plot(sample_indices, anomaly_scores, color='#2E86AB', alpha=0.7, 
+                   linewidth=1.2, label='Anomaly Scores', zorder=2)
             
-            # Highlight anomalies
+            # Highlight anomalies with better visibility
             if len(anomaly_indices) > 0:
                 ax.scatter(anomaly_indices, anomaly_scores[anomaly_indices], 
-                          color='red', s=50, alpha=0.8, zorder=5, label='Detected Anomalies')
+                          color='#E63946', s=80, alpha=0.9, zorder=5, 
+                          label='Detected Anomalies', edgecolors='darkred', linewidth=1)
             
             # Add threshold line if available
+            threshold = None
             if len(anomaly_indices) > 0:
                 threshold = np.min(anomaly_scores[anomaly_indices])
-                ax.axhline(y=threshold, color='orange', linestyle='--', linewidth=2, 
-                          alpha=0.8, label=f'Threshold: {threshold:.3f}')
+                ax.axhline(y=threshold, color='#F77F00', linestyle='--', linewidth=2.5, 
+                          alpha=0.9, label=f'Threshold: {threshold:.3f}', zorder=3)
             
-            ax.set_xlabel('Sample Index')
-            ax.set_ylabel('Anomaly Score')
-            ax.set_title('Anomaly Scores Timeline')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
+            # Improve axis labels and title
+            ax.set_xlabel('Sample Index', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Anomaly Score', fontsize=12, fontweight='bold')
+            ax.set_title('Anomaly Scores Timeline', fontsize=14, fontweight='bold', pad=20)
             
-            # Add statistics text box
+            # Improve legend positioning and styling
+            legend = ax.legend(loc='upper right', bbox_to_anchor=(0.98, 0.98), 
+                             frameon=True, fancybox=True, shadow=True, 
+                             fontsize=11, framealpha=0.95)
+            legend.get_frame().set_facecolor('white')
+            legend.get_frame().set_edgecolor('gray')
+            
+            # Improve grid
+            ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+            ax.set_axisbelow(True)
+            
+            # Add statistics text box in a better position (bottom left)
             stats_text = f'Total Samples: {len(anomaly_scores)}\n'
             stats_text += f'Anomalies: {len(anomaly_indices)}\n'
             stats_text += f'Anomaly Rate: {len(anomaly_indices)/len(anomaly_scores)*100:.1f}%'
             
-            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
-                   verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+            # Position stats box to avoid legend overlap
+            ax.text(0.02, 0.02, stats_text, transform=ax.transAxes, 
+                   verticalalignment='bottom', horizontalalignment='left',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightblue', 
+                           alpha=0.8, edgecolor='navy', linewidth=1),
+                   fontsize=10, fontweight='bold')
+            
+            # Improve axis appearance
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_linewidth(1.2)
+            ax.spines['bottom'].set_linewidth(1.2)
+            
+            # Set axis limits with some padding
+            y_range = np.max(anomaly_scores) - np.min(anomaly_scores)
+            ax.set_ylim(np.min(anomaly_scores) - 0.1 * y_range, 
+                       np.max(anomaly_scores) + 0.1 * y_range)
+            
+            # Add subtle background color
+            ax.set_facecolor('#FAFAFA')
             
             plt.tight_layout()
             plt.show()
