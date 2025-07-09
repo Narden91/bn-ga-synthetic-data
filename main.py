@@ -389,7 +389,7 @@ def main():
         },
         'genetic_algorithm': {
             'population_size': 100,   # Reasonable population for good optimization
-            'generations': 100,       # Sufficient generations for convergence
+            'generations': 150,       # Sufficient generations for convergence
             'mutation_rate': 0.2,
             'crossover_rate': 0.7
         },

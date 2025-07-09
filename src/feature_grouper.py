@@ -86,7 +86,7 @@ class FeatureGrouper:
     
     def _correlation_based_grouping(self, data: pd.DataFrame, group_size: int) -> List[List[str]]:
         """
-        Create feature groups based on correlation clustering.
+        Create feature groups based on correlation clustering with multiple robust strategies.
         
         Args:
             data (pd.DataFrame): Input data
@@ -97,26 +97,66 @@ class FeatureGrouper:
         """
         print("     Using correlation-based grouping strategy")
         
+        # Strategy 1: Try hierarchical clustering with correlation distance
+        try:
+            return self._hierarchical_correlation_clustering(data, group_size)
+        except Exception as e:
+            print(f"     Hierarchical clustering failed: {str(e)}")
+        
+        # Strategy 2: Try KMeans clustering on correlation features
+        try:
+            return self._kmeans_correlation_clustering(data, group_size)
+        except Exception as e:
+            print(f"     KMeans clustering failed: {str(e)}")
+        
+        # Strategy 3: Try graph-based clustering
+        try:
+            return self._graph_based_clustering(data, group_size)
+        except Exception as e:
+            print(f"     Graph-based clustering failed: {str(e)}")
+        
+        # Strategy 4: Fallback to greedy correlation grouping
+        try:
+            return self._greedy_correlation_grouping(data, group_size)
+        except Exception as e:
+            print(f"     Greedy correlation grouping failed: {str(e)}")
+        
+        # Final fallback: random grouping
+        print("     All correlation strategies failed, falling back to random")
+        return self._random_grouping(list(data.columns), group_size)
+    
+    def _hierarchical_correlation_clustering(self, data: pd.DataFrame, group_size: int) -> List[List[str]]:
+        """
+        Hierarchical clustering using correlation distance.
+        """
+        print("     Trying hierarchical correlation clustering...")
+        
         # Calculate correlation matrix
         correlation_matrix = data.corr().abs()
-        
-        # Handle NaN values in correlation matrix
         correlation_matrix = correlation_matrix.fillna(0)
         
-        # Convert correlation to distance (1 - correlation)
-        distance_matrix = 1 - correlation_matrix
+        # Ensure diagonal is 1 (perfect self-correlation)
+        np.fill_diagonal(correlation_matrix.values, 1.0)
         
-        # Perform hierarchical clustering
+        # Method 1: Use correlation distance directly with pdist
         try:
-            # Convert distance matrix to condensed form
-            condensed_distances = pdist(distance_matrix, metric='precomputed')
-            
-            # Perform linkage
-            linkage_matrix = linkage(condensed_distances, method='ward')
-            
-            # Determine number of clusters
+            # Use 1 - correlation as distance, but extract upper triangle properly
             n_features = len(data.columns)
-            n_clusters = max(1, n_features // group_size)
+            distance_matrix = 1 - correlation_matrix
+            
+            # Extract upper triangle as condensed distance matrix
+            condensed_distances = []
+            for i in range(n_features):
+                for j in range(i + 1, n_features):
+                    condensed_distances.append(distance_matrix.iloc[i, j])
+            
+            condensed_distances = np.array(condensed_distances)
+            
+            # Perform linkage with average method (more stable than ward for distance matrices)
+            linkage_matrix = linkage(condensed_distances, method='average')
+            
+            # Determine optimal number of clusters
+            n_clusters = max(1, min(n_features // group_size, n_features // 2))
             
             # Get cluster assignments
             cluster_labels = fcluster(linkage_matrix, n_clusters, criterion='maxclust')
@@ -126,14 +166,205 @@ class FeatureGrouper:
             for i, label in enumerate(cluster_labels):
                 groups[label - 1].append(data.columns[i])
             
-            # Remove empty groups and balance group sizes
+            # Remove empty groups and balance if needed
             groups = [group for group in groups if group]
-            groups = self._balance_group_sizes(groups, group_size)
+            if any(len(group) > group_size * 1.5 for group in groups):
+                groups = self._balance_group_sizes(groups, group_size)
+            
+            print(f"     Hierarchical clustering successful: {len(groups)} groups")
+            return groups
             
         except Exception as e:
-            print(f"     Correlation clustering failed: {str(e)}, falling back to random")
-            return self._random_grouping(list(data.columns), group_size)
+            raise Exception(f"Hierarchical method failed: {str(e)}")
+    
+    def _kmeans_correlation_clustering(self, data: pd.DataFrame, group_size: int) -> List[List[str]]:
+        """
+        KMeans clustering using correlation features.
+        """
+        print("     Trying KMeans correlation clustering...")
         
+        # Calculate correlation matrix
+        correlation_matrix = data.corr().abs()
+        correlation_matrix = correlation_matrix.fillna(0)
+        
+        # Use correlation values as features for clustering
+        n_features = len(data.columns)
+        n_clusters = max(1, n_features // group_size)
+        
+        # Each feature is represented by its correlations with all other features
+        correlation_features = correlation_matrix.values
+        
+        # Apply KMeans
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        cluster_labels = kmeans.fit_predict(correlation_features)
+        
+        # Create groups from clusters
+        groups = [[] for _ in range(n_clusters)]
+        for i, label in enumerate(cluster_labels):
+            groups[label].append(data.columns[i])
+        
+        # Remove empty groups and balance if needed
+        groups = [group for group in groups if group]
+        if any(len(group) > group_size * 1.5 for group in groups):
+            groups = self._balance_group_sizes(groups, group_size)
+        
+        print(f"     KMeans clustering successful: {len(groups)} groups")
+        return groups
+    
+    def _graph_based_clustering(self, data: pd.DataFrame, group_size: int) -> List[List[str]]:
+        """
+        Graph-based clustering using correlation threshold.
+        """
+        print("     Trying graph-based clustering...")
+        
+        # Calculate correlation matrix
+        correlation_matrix = data.corr().abs()
+        correlation_matrix = correlation_matrix.fillna(0)
+        
+        # Set correlation threshold (features with correlation > threshold are connected)
+        correlation_threshold = 0.3
+        features = list(data.columns)
+        n_features = len(features)
+        
+        # Build adjacency list
+        adjacency = {feature: [] for feature in features}
+        for i in range(n_features):
+            for j in range(i + 1, n_features):
+                corr_value = correlation_matrix.iloc[i, j]
+                # Convert to float safely using numpy
+                try:
+                    if pd.isna(corr_value):
+                        corr_value = 0.0
+                    else:
+                        corr_value = np.asarray(corr_value, dtype=float).item()
+                except (ValueError, TypeError):
+                    corr_value = 0.0
+                
+                if corr_value > correlation_threshold:
+                    adjacency[features[i]].append(features[j])
+                    adjacency[features[j]].append(features[i])
+        
+        # Find connected components using DFS
+        visited = set()
+        groups = []
+        
+        def dfs(feature, current_group):
+            if feature in visited or len(current_group) >= group_size * 1.5:
+                return
+            visited.add(feature)
+            current_group.append(feature)
+            for neighbor in adjacency[feature]:
+                if neighbor not in visited and len(current_group) < group_size * 1.5:
+                    dfs(neighbor, current_group)
+        
+        # Create groups from connected components
+        for feature in features:
+            if feature not in visited:
+                current_group = []
+                dfs(feature, current_group)
+                if current_group:
+                    groups.append(current_group)
+        
+        # Balance group sizes if needed
+        if any(len(group) > group_size * 1.5 for group in groups) or any(len(group) < 3 for group in groups):
+            groups = self._balance_group_sizes(groups, group_size)
+        
+        print(f"     Graph-based clustering successful: {len(groups)} groups")
+        return groups
+    
+    def _greedy_correlation_grouping(self, data: pd.DataFrame, group_size: int) -> List[List[str]]:
+        """
+        Greedy grouping based on highest correlations.
+        """
+        print("     Trying greedy correlation grouping...")
+        
+        # Calculate correlation matrix
+        correlation_matrix = data.corr().abs()
+        correlation_matrix = correlation_matrix.fillna(0)
+        
+        features = list(data.columns)
+        groups = []
+        used_features = set()
+        
+        while len(used_features) < len(features):
+            # Start with unused feature that has highest average correlation
+            remaining_features = [f for f in features if f not in used_features]
+            if not remaining_features:
+                break
+            
+            # Find feature with highest average correlation to remaining features
+            best_feature = None
+            best_avg_corr = -1
+            
+            for feature in remaining_features:
+                # Calculate average correlation with other remaining features
+                correlations = []
+                for other_feature in remaining_features:
+                    if other_feature != feature:
+                        corr_val = correlation_matrix.at[feature, other_feature]
+                        try:
+                            corr_val = np.asarray(corr_val, dtype=float).item()
+                        except (ValueError, TypeError):
+                            corr_val = 0.0
+                        correlations.append(corr_val)
+                
+                if correlations:
+                    avg_corr = np.mean(correlations)
+                    if avg_corr > best_avg_corr:
+                        best_avg_corr = avg_corr
+                        best_feature = feature
+            
+            if best_feature is None:
+                best_feature = remaining_features[0]
+            
+            # Build group starting from best feature
+            current_group = [best_feature]
+            used_features.add(best_feature)
+            
+            # Greedily add most correlated features to current group
+            while len(current_group) < group_size:
+                remaining_features = [f for f in features if f not in used_features]
+                if not remaining_features:
+                    break
+                
+                # Find feature most correlated with current group
+                best_candidate = None
+                best_correlation = -1
+                
+                for candidate in remaining_features:
+                    # Average correlation with current group
+                    group_correlations = []
+                    for member in current_group:
+                        corr_val = correlation_matrix.at[candidate, member]
+                        try:
+                            corr_val = np.asarray(corr_val, dtype=float).item()
+                        except (ValueError, TypeError):
+                            corr_val = 0.0
+                        group_correlations.append(corr_val)
+                    
+                    avg_correlation = np.mean(group_correlations)
+                    
+                    if avg_correlation > best_correlation:
+                        best_correlation = avg_correlation
+                        best_candidate = candidate
+                
+                if best_candidate and best_correlation > 0.1:  # Minimum correlation threshold
+                    current_group.append(best_candidate)
+                    used_features.add(best_candidate)
+                else:
+                    break
+            
+            groups.append(current_group)
+        
+        # Add any remaining features to the last group or create new group
+        remaining_features = [f for f in features if f not in used_features]
+        if remaining_features:
+            if groups and len(groups[-1]) + len(remaining_features) <= group_size * 1.5:
+                groups[-1].extend(remaining_features)
+            else:
+                groups.append(remaining_features)
+        
+        print(f"     Greedy correlation grouping successful: {len(groups)} groups")
         return groups
     
     def _domain_based_grouping(self, features: List[str], group_size: int) -> List[List[str]]:
