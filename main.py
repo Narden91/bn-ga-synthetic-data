@@ -8,6 +8,10 @@ that handles large feature sets by dividing them into smaller groups.
 import pandas as pd
 import numpy as np
 import warnings
+import os
+import matplotlib.pyplot as plt
+from typing import Optional, Dict, Any, List
+
 warnings.filterwarnings('ignore')
 
 from src.data_loader import DataLoader
@@ -24,7 +28,7 @@ class BayesianAnomalyDetectionSystem:
     Main system for Bayesian Network-based anomaly detection.
     """
     
-    def __init__(self, data_path: str, config: dict = None):
+    def __init__(self, data_path: str, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the anomaly detection system.
         
@@ -46,13 +50,13 @@ class BayesianAnomalyDetectionSystem:
         self.visualizer = ResultVisualizer()
         
         # Data storage
-        self.raw_data = None
-        self.processed_data = None
-        self.feature_groups = None
-        self.bayesian_networks = {}
-        self.likelihood_scores = None
-        self.anomaly_scores = None
-        self.anomalies = None
+        self.raw_data: Optional[pd.DataFrame] = None
+        self.processed_data: Optional[pd.DataFrame] = None
+        self.feature_groups: Optional[List[List[str]]] = None
+        self.bayesian_networks: Dict[int, Any] = {}
+        self.likelihood_scores: Optional[pd.DataFrame] = None
+        self.anomaly_scores: Optional[np.ndarray] = None
+        self.anomalies: Optional[np.ndarray] = None
         
     def _merge_configs(self, default_config: dict, user_config: dict) -> dict:
         """
@@ -213,9 +217,38 @@ class BayesianAnomalyDetectionSystem:
             'anomaly_scores': self.anomaly_scores,
             'likelihood_scores': self.likelihood_scores,
             'feature_groups': self.feature_groups,
-            'n_anomalies': len(self.anomalies)
+            'n_anomalies': len(self.anomalies) if self.anomalies is not None else 0
         }
     
+    def plot_bayesian_network(self, group_id: int):
+        """
+        Plot the Bayesian Network for a specific group.
+        
+        Args:
+            group_id (int): The ID of the feature group to plot.
+        """
+        print(f"📊 Plotting Bayesian Network for group {group_id}...")
+        if not self.bayesian_networks:
+            print("     ❌ Bayesian networks have not been learned yet. Run the pipeline first.")
+            return
+            
+        if group_id not in self.bayesian_networks:
+            print(f"     ❌ Group ID {group_id} not found. Available groups: {list(self.bayesian_networks.keys())}")
+            return
+            
+        # Create a figure and axes for the plot
+        fig, ax = plt.subplots(figsize=(12, 10))
+        
+        # Use the learner to plot the network
+        self.bn_learner.plot_network(group_id, ax=ax)
+        
+        # Save the plot to the execution folder
+        plot_path = os.path.join(self.visualizer.get_execution_folder_path(), f"bayesian_network_group_{group_id}.png")
+        fig.savefig(plot_path)
+        plt.close(fig)
+        
+        print(f"     ✅ Network plot saved to {plot_path}")
+
     def get_anomaly_analysis(self):
         """
         Get detailed analysis of detected anomalies.
@@ -223,7 +256,7 @@ class BayesianAnomalyDetectionSystem:
         Returns:
             dict: Detailed analysis results
         """
-        if self.anomalies is None:
+        if self.anomalies is None or self.processed_data is None or self.anomaly_scores is None:
             raise ValueError("No anomalies detected yet. Run the pipeline first.")
         
         analysis = {
@@ -237,7 +270,7 @@ class BayesianAnomalyDetectionSystem:
                 'max': np.max(self.anomaly_scores),
                 'median': np.median(self.anomaly_scores)
             },
-            'top_anomalies': self.anomalies[:10] if len(self.anomalies) > 10 else self.anomalies
+            'top_anomalies': self.anomalies.tolist()[:10]
         }
         
         return analysis
@@ -245,7 +278,6 @@ class BayesianAnomalyDetectionSystem:
     def _save_comprehensive_results(self):
         """Save all results to the results folder."""
         try:
-            import os
             import json
             from datetime import datetime
             
@@ -253,24 +285,26 @@ class BayesianAnomalyDetectionSystem:
             results_dir = self.visualizer.get_execution_folder_path()
             
             # 1. Save main results
-            self.visualizer.export_results(
-                self.anomaly_scores, 
-                self.anomalies, 
-                self.likelihood_scores
-            )
+            if self.anomaly_scores is not None and self.anomalies is not None and self.likelihood_scores is not None:
+                self.visualizer.export_results(
+                    self.anomaly_scores, 
+                    self.anomalies, 
+                    self.likelihood_scores
+                )
             
             # 2. Save summary report
-            summary_report = self.visualizer.create_summary_report(
-                self.anomaly_scores,
-                self.anomalies,
-                self.likelihood_scores,
-                self.feature_groups
-            )
-            
-            report_file = os.path.join(results_dir, "summary_report.txt")
-            with open(report_file, 'w') as f:
-                f.write(summary_report)
-            print(f"     Summary report saved to {report_file}")
+            if self.anomaly_scores is not None and self.anomalies is not None and self.likelihood_scores is not None and self.feature_groups is not None:
+                summary_report = self.visualizer.create_summary_report(
+                    self.anomaly_scores,
+                    self.anomalies,
+                    self.likelihood_scores,
+                    self.feature_groups
+                )
+                
+                report_file = os.path.join(results_dir, "summary_report.txt")
+                with open(report_file, 'w') as f:
+                    f.write(summary_report)
+                print(f"     Summary report saved to {report_file}")
             
             # 3. Save configuration
             config_file = os.path.join(results_dir, "pipeline_config.json")
@@ -371,25 +405,25 @@ def main():
     # Configuration
     data_path = "data/Dati_wallbox_aggregati.csv"
     
-    # Custom configuration - CMA-ES Example
+    # Custom configuration
     custom_config = {
         'feature_grouping': {
             'group_size': 10,  # Smaller groups for better BN learning
             'strategy': 'correlation'
         },
         'bayesian_network': {
-            'structure_learning': 'naive_bayes',  # More stable for large datasets
+            'structure_learning': 'hc',  # More stable for large datasets
             'discretization_bins': 3  # Fewer bins for better learning
         },
         'anomaly_detection': {
-            'threshold_percentile': 5,  # Top 5% as anomalies
+            'threshold_percentile': 4,  # Top n% as anomalies
             'threshold_method': 'percentile',
             'aggregation_method': 'mean',
             'use_zscore_transformation': True
         },
         'genetic_algorithm': {
             'population_size': 100,   # Reasonable population for good optimization
-            'generations': 150,       # Sufficient generations for convergence
+            'generations': 100,       # Sufficient generations for convergence
             'mutation_rate': 0.2,
             'crossover_rate': 0.7
         },
@@ -408,6 +442,10 @@ def main():
     system = BayesianAnomalyDetectionSystem(data_path, custom_config)
     results = system.run_full_pipeline()
     
+    # Plot a representative Bayesian Network (e.g., for group 0)
+    if system.bayesian_networks:
+        system.plot_bayesian_network(group_id=4)
+
     # Print analysis
     print("\n📋 ANOMALY DETECTION ANALYSIS")
     print("=" * 40)

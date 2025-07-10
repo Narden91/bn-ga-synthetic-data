@@ -78,7 +78,7 @@ class AnomalyDetector:
             # Median likelihood
             aggregated = likelihood_scores.median(axis=1).values
         elif method == 'weighted':
-            # Weighted average (equal weights for now)
+            # Weighted average 
             weights = np.ones(likelihood_scores.shape[1]) / likelihood_scores.shape[1]
             aggregated = np.average(likelihood_scores.values, axis=1, weights=weights)
         elif method == 'sum':
