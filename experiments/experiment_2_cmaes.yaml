@@ -1,0 +1,78 @@
+# Experiment 2: CMA-ES Optimization Configuration
+# This configuration uses CMA-ES optimizer with different parameters
+
+# Data source configuration
+data:
+  path: "data/Dati_wallbox_aggregati.csv"
+  
+# Data preprocessing configuration
+preprocessing:
+  missing_threshold: 0.5
+  scale_features: true
+  handle_categorical: true
+
+# Feature grouping configuration
+feature_grouping:
+  group_size: 12          # Medium-sized groups
+  strategy: "correlation" 
+
+# Bayesian Network learning configuration
+bayesian_network:
+  structure_learning: "naive_bayes"  # Simpler structure for faster computation
+  discretization_bins: 5
+  max_parents: 3
+
+# Anomaly detection configuration
+anomaly_detection:
+  threshold_percentile: 5.0
+  threshold_method: "percentile"
+  aggregation_method: "median"      # Use median instead of mean
+  use_zscore_transformation: true
+  use_rank_transformation: false
+
+# Genetic Algorithm optimization configuration (backup)
+genetic_algorithm:
+  population_size: 50
+  generations: 50
+  mutation_rate: 0.2
+  crossover_rate: 0.7
+  tournament_size: 3
+
+# CMA-ES optimization configuration (primary)
+cmaes_algorithm:
+  population_size: 20     # Specific population size
+  generations: 100        # Focused exploration
+  initial_sigma: 1.0      # Higher initial exploration
+
+# Optimization settings
+optimization:
+  algorithm: "cmaes"      # Use CMA-ES for this experiment
+  use_optimization: true
+
+# Visualization settings
+visualization:
+  save_plots: true
+  show_plots: false
+  plot_format: "pdf"      # Use PDF for publication quality
+  dpi: 600
+
+# Output settings
+output:
+  results_dir: "results"
+  save_detailed_results: true
+  save_intermediate_results: false
+  compression: true       # Compress output files
+
+# Logging settings
+logging:
+  level: "DEBUG"          # More detailed logging
+  save_to_file: true
+  verbose: true
+
+# Advanced settings
+advanced:
+  random_seed: 67890
+  parallel_processing: false
+  memory_limit_gb: 8.0
+  early_stopping: false  # Disable early stopping for full exploration
+  convergence_threshold: 1e-5

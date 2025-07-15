@@ -48,6 +48,18 @@ coverage.xml
 *.cover
 *.py.cover
 .hypothesis/
+
+# Configuration files
+# Include example configs but exclude personal/temporary configs
+config_personal.yaml
+config_local.yaml
+temp_*.yaml
+*.backup.yaml
+*_backup.yaml
+
+# Experiment results (optional - comment out if you want to track results)
+# results/*/
+# experiments/results/
 .pytest_cache/
 cover/
 

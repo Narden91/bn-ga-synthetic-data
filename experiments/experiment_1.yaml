@@ -1,0 +1,78 @@
+# Experiment 1: High-Performance Genetic Algorithm Configuration
+# This configuration is optimized for thorough exploration and high-quality results
+
+# Data source configuration
+data:
+  path: "data/Dati_wallbox_aggregati.csv"
+  
+# Data preprocessing configuration
+preprocessing:
+  missing_threshold: 0.4  # Slightly more aggressive missing value handling
+  scale_features: true
+  handle_categorical: true
+
+# Feature grouping configuration
+feature_grouping:
+  group_size: 8           # Smaller groups for more detailed analysis
+  strategy: "correlation" 
+
+# Bayesian Network learning configuration
+bayesian_network:
+  structure_learning: "hc"     # Hill climbing for better structure learning
+  discretization_bins: 4       # Moderate binning for balance
+  max_parents: 4               # Allow more complex relationships
+
+# Anomaly detection configuration
+anomaly_detection:
+  threshold_percentile: 3.0           # More stringent anomaly detection
+  threshold_method: "percentile"
+  aggregation_method: "mean"
+  use_zscore_transformation: true
+  use_rank_transformation: false
+
+# Genetic Algorithm optimization configuration (high-performance)
+genetic_algorithm:
+  population_size: 150    # Larger population for better exploration
+  generations: 200        # More generations for convergence
+  mutation_rate: 0.15     # Moderate mutation rate
+  crossover_rate: 0.8     # High crossover rate
+  tournament_size: 4      # Larger tournament for stronger selection pressure
+
+# CMA-ES optimization configuration
+cmaes_algorithm:
+  population_size: null   # Let CMA-ES decide
+  generations: 200        # Extended exploration
+  initial_sigma: 0.6      # Moderate initial exploration
+
+# Optimization settings
+optimization:
+  algorithm: "genetic"    # Use genetic algorithm for this experiment
+  use_optimization: true
+
+# Visualization settings
+visualization:
+  save_plots: true
+  show_plots: false
+  plot_format: "png"
+  dpi: 300
+
+# Output settings
+output:
+  results_dir: "results"
+  save_detailed_results: true
+  save_intermediate_results: true   # Save intermediate results for analysis
+  compression: false
+
+# Logging settings
+logging:
+  level: "INFO"
+  save_to_file: true              # Save detailed logs
+  verbose: true
+
+# Advanced settings
+advanced:
+  random_seed: 12345              # Different seed for experiment
+  parallel_processing: false
+  memory_limit_gb: 16.0           # Higher memory limit if available
+  early_stopping: true
+  convergence_threshold: 1e-7     # Stricter convergence

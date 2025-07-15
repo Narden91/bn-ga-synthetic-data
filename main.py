@@ -22,22 +22,27 @@ from src.anomaly_detector import AnomalyDetector
 from src.genetic_optimizer import GeneticOptimizer
 from src.cmaes_optimizer import CMAESOptimizer
 from src.visualizer import ResultVisualizer
+from src.config_loader import ConfigLoader
 
 class BayesianAnomalyDetectionSystem:
     """
     Main system for Bayesian Network-based anomaly detection.
     """
     
-    def __init__(self, data_path: str, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, config_path: Optional[str] = None):
         """
         Initialize the anomaly detection system.
         
         Args:
-            data_path (str): Path to the CSV data file
-            config (dict): Configuration parameters
+            config (dict, optional): Configuration parameters (overrides YAML config)
+            config_path (str, optional): Path to YAML config file
         """
-        self.data_path = data_path
-        self.config = self._merge_configs(self._default_config(), config or {})
+        # Load configuration using ConfigLoader
+        config_loader = ConfigLoader(config_path)
+        self.config = config_loader.load_config(config)
+        
+        # Extract data path from config
+        self.data_path = self.config.get('data', {}).get('path', 'data/Dati_wallbox_aggregati.csv')
         
         # Initialize components
         self.data_loader = DataLoader()
@@ -57,63 +62,6 @@ class BayesianAnomalyDetectionSystem:
         self.likelihood_scores: Optional[pd.DataFrame] = None
         self.anomaly_scores: Optional[np.ndarray] = None
         self.anomalies: Optional[np.ndarray] = None
-        
-    def _merge_configs(self, default_config: dict, user_config: dict) -> dict:
-        """
-        Merge user configuration with default configuration.
-        
-        Args:
-            default_config (dict): Default configuration
-            user_config (dict): User-provided configuration
-            
-        Returns:
-            dict: Merged configuration
-        """
-        merged = default_config.copy()
-        for key, value in user_config.items():
-            if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
-                merged[key].update(value)
-            else:
-                merged[key] = value
-        return merged
-    
-    def _default_config(self):
-        """Default configuration parameters."""
-        return {
-            'preprocessing': {
-                'missing_threshold': 0.5,  # Drop columns with >50% missing
-                'scale_features': True,
-                'handle_categorical': True
-            },
-            'feature_grouping': {
-                'group_size': 15,  # Features per group
-                'strategy': 'correlation'  # 'random', 'correlation', 'domain'
-            },
-            'bayesian_network': {
-                'structure_learning': 'naive_bayes',  # 'naive_bayes', 'pc', 'hc'
-                'discretization_bins': 5,
-                'max_parents': 3
-            },
-            'anomaly_detection': {
-                'aggregation_method': 'mean',  # 'mean', 'min', 'weighted'
-                'threshold_percentile': 5  # Bottom 5% as anomalies
-            },
-            'genetic_algorithm': {
-                'population_size': 50,
-                'generations': 100,
-                'mutation_rate': 0.1,
-                'crossover_rate': 0.8
-            },
-            'cmaes_algorithm': {
-                'population_size': None,  # Let CMA-ES decide
-                'generations': 100,
-                'initial_sigma': 0.3
-            },
-            'optimization': {
-                'algorithm': 'genetic',  # 'genetic' or 'cmaes'
-                'use_optimization': True
-            }
-        }
     
     def run_full_pipeline(self):
         """
@@ -401,12 +349,22 @@ class BayesianAnomalyDetectionSystem:
 
 
 def main():
-    """Main execution function."""
-    # Configuration
-    data_path = "data/Dati_wallbox_aggregati.csv"
+    """Main execution function with YAML configuration support."""
+    print("🔧 BAYESIAN ANOMALY DETECTION SYSTEM")
+    print("=" * 50)
     
-    # Custom configuration
-    custom_config = {
+    # Option 1: Use default config.yaml file
+    print("📄 Loading configuration...")
+    
+    # config_path = "custom_config.yaml"  # Optional: use custom config file
+    config_path = None  # Uses default config.yaml
+    
+    # Optional: Override specific configuration parameters
+    # This will be merged with the YAML configuration
+    config_overrides = {
+        'data': {
+            'path': "data/Dati_wallbox_aggregati.csv"
+        },
         'feature_grouping': {
             'group_size': 10,  # Smaller groups for better BN learning
             'strategy': 'correlation'
@@ -416,7 +374,7 @@ def main():
             'discretization_bins': 3  # Fewer bins for better learning
         },
         'anomaly_detection': {
-            'threshold_percentile': 4,  # Top n% as anomalies
+            'threshold_percentile': 4.0,  # Top n% as anomalies
             'threshold_method': 'percentile',
             'aggregation_method': 'mean',
             'use_zscore_transformation': True
@@ -438,11 +396,21 @@ def main():
         }
     }
     
-    # Initialize and run system
-    system = BayesianAnomalyDetectionSystem(data_path, custom_config)
+    # Initialize and run system with YAML configuration
+    system = BayesianAnomalyDetectionSystem(
+        config=config_overrides,  # Optional overrides
+        config_path=config_path   # Path to YAML config (None = default config.yaml)
+    )
+    
+    print(f"📊 Data source: {system.data_path}")
+    print(f"🔍 Optimizer: {system.config['optimization']['algorithm'].upper()}")
+    print(f"📦 Group size: {system.config['feature_grouping']['group_size']}")
+    print()
+    
+    # Run the full pipeline
     results = system.run_full_pipeline()
     
-    # Plot a representative Bayesian Network (e.g., for group 0)
+    # Plot a representative Bayesian Network (e.g., for group 4)
     if system.bayesian_networks:
         system.plot_bayesian_network(group_id=4)
 
@@ -470,6 +438,45 @@ def main():
     print("   - Text report with detailed analysis")
     print(f"   - {optimizer_type.upper()} optimization results (if enabled)")
     print("   - Master summary file with execution metadata")
+    print(f"   - Pipeline configuration: pipeline_config.json")
+    
+    print(f"\n💡 Configuration was loaded from: config.yaml")
+    print("   You can modify config.yaml to change system behavior")
+    print("   Or create custom config files and specify them in the code")
+
+
+def main_with_custom_config():
+    print("🔧 BAYESIAN ANOMALY DETECTION SYSTEM (Custom Config)")
+    print("=" * 60)
+    
+    # Use a custom configuration file
+    custom_config_path = "experiments/experiment_1.yaml" # experiment_2_cmaes.yaml
+    
+    # Minimal overrides (if any)
+    minimal_overrides = {
+        'logging': {
+            'verbose': True
+        }
+    }
+    
+    try:
+        system = BayesianAnomalyDetectionSystem(
+            config=minimal_overrides,
+            config_path=custom_config_path
+        )
+        results = system.run_full_pipeline()
+        print(f"✅ Experiment completed with config: {custom_config_path}")
+        
+    except FileNotFoundError:
+        print(f"❌ Custom config file not found: {custom_config_path}")
+        print("   Falling back to default configuration...")
+        system = BayesianAnomalyDetectionSystem()
+        results = system.run_full_pipeline()
+
 
 if __name__ == "__main__":
-    main()
+    # Run the main function with YAML configuration
+    # main()
+    
+    # Uncomment to run with custom config file:
+    main_with_custom_config()

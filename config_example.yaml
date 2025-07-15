@@ -1,0 +1,78 @@
+# Bayesian Anomaly Detection System Configuration
+# This file contains all configuration parameters for the anomaly detection pipeline
+
+# Data source configuration
+data:
+  path: "data/Dati_wallbox_aggregati.csv"  # Path to input CSV file
+  
+# Data preprocessing configuration
+preprocessing:
+  missing_threshold: 0.5  # Drop columns with >50% missing values
+  scale_features: true    # Apply StandardScaler to numeric features
+  handle_categorical: true # Encode categorical variables
+
+# Feature grouping configuration
+feature_grouping:
+  group_size: 15          # Number of features per group
+  strategy: "correlation" # Options: 'random', 'correlation', 'domain', 'variance'
+
+# Bayesian Network learning configuration
+bayesian_network:
+  structure_learning: "naive_bayes"  # Options: 'naive_bayes', 'pc', 'hc', 'mmhc'
+  discretization_bins: 5             # Number of bins for discretization
+  max_parents: 3                     # Maximum number of parent nodes
+
+# Anomaly detection configuration
+anomaly_detection:
+  threshold_percentile: 5.0           # Bottom n% as anomalies
+  threshold_method: "percentile"      # Options: 'percentile', 'std', 'iqr', 'adaptive'
+  aggregation_method: "mean"          # Options: 'mean', 'min', 'max', 'median', 'weighted', 'sum'
+  use_zscore_transformation: true     # Apply z-score transformation before thresholding
+  use_rank_transformation: false     # Apply rank-based transformation
+
+# Genetic Algorithm optimization configuration
+genetic_algorithm:
+  population_size: 50     # Population size for GA
+  generations: 100        # Number of generations
+  mutation_rate: 0.1      # Mutation probability
+  crossover_rate: 0.8     # Crossover probability
+  tournament_size: 3      # Tournament selection size
+
+# CMA-ES optimization configuration
+cmaes_algorithm:
+  population_size: null   # Let CMA-ES decide automatically
+  generations: 100        # Number of iterations
+  initial_sigma: 0.3      # Initial standard deviation for exploration
+
+# Optimization settings
+optimization:
+  algorithm: "genetic"    # Options: 'genetic', 'cmaes'
+  use_optimization: true  # Enable/disable parameter optimization
+
+# Visualization settings
+visualization:
+  save_plots: true        # Save plots to files
+  show_plots: false       # Display plots on screen
+  plot_format: "png"      # Plot file format
+  dpi: 300               # Plot resolution
+
+# Output settings
+output:
+  results_dir: "results"              # Base directory for results
+  save_detailed_results: true        # Save detailed analysis files
+  save_intermediate_results: false   # Save intermediate processing results
+  compression: false                  # Compress output files
+
+# Logging settings
+logging:
+  level: "INFO"           # Options: 'DEBUG', 'INFO', 'WARNING', 'ERROR'
+  save_to_file: false     # Save logs to file
+  verbose: true           # Print detailed progress information
+
+# Advanced settings
+advanced:
+  random_seed: 42                     # Random seed for reproducibility
+  parallel_processing: false         # Enable parallel processing (experimental)
+  memory_limit_gb: 8.0               # Memory limit in GB
+  early_stopping: true               # Enable early stopping in optimization
+  convergence_threshold: 1e-6        # Convergence threshold for optimization
