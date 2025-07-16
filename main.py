@@ -407,7 +407,7 @@ def main():
     print(f"📦 Group size: {system.config['feature_grouping']['group_size']}")
     print()
     
-    # Run the full pipeline
+    # Run
     results = system.run_full_pipeline()
     
     # Plot a representative Bayesian Network (e.g., for group 4)
