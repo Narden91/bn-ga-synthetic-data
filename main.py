@@ -459,12 +459,12 @@ def main():
     print("   Or create custom config files and specify them in the code")
 
 
-def main_with_custom_config():
+def main_with_custom_config(custom_config_path: str):
     print("🔧 BAYESIAN ANOMALY DETECTION SYSTEM (Custom Config)")
     print("=" * 60)
     
     # Use a custom configuration file
-    custom_config_path = "experiments/experiment_1.yaml" # experiment_2_cmaes.yaml
+    # custom_config_path = "experiments/experiment_1.yaml" # experiment_2_cmaes.yaml
     
     # Minimal overrides (if any)
     minimal_overrides = {
@@ -489,8 +489,31 @@ def main_with_custom_config():
 
 
 if __name__ == "__main__":
-    # Run the main function with YAML configuration
-    # main()
+    # --- CHOOSE YOUR EXPERIMENT ---
+    # 1. Default configuration (from main function)
+    # 2. Balanced Detection (CMA-ES)
+    # 3. Conservative Detection (CMA-ES)
+    # 4. Aggressive Detection (Genetic Algorithm)
     
-    # Uncomment to run with custom config file:
-    main_with_custom_config()
+    experiment_to_run = 2  # <--- CHANGE THIS VALUE TO SELECT AN EXPERIMENT
+
+    if experiment_to_run == 1:
+        print("🚀 Running default configuration...")
+        main()
+    else:
+        experiment_files = {
+            2: "experiments/experiment_weighted_balanced.yaml",
+            3: "experiments/experiment_weighted_conservative.yaml",
+            4: "experiments/experiment_weighted_aggressive.yaml",
+        }
+        
+        config_file = experiment_files.get(experiment_to_run)
+        
+        if config_file:
+            print(f"🚀 Running experiment with config: {config_file}")
+            main_with_custom_config(config_file)
+        else:
+            print(f"❌ Invalid choice: {experiment_to_run}. Please choose from 1, 2, 3, or 4.")
+            print("Available experiments:")
+            for key, value in experiment_files.items():
+                print(f"  {key}: {value}")
