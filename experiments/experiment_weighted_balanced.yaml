@@ -1,0 +1,35 @@
+# Balanced Detection - Equal focus on detection quality and robustness
+# Well-balanced approach for general-purpose anomaly detection
+
+data:
+  path: "data/Dati_wallbox_aggregati.csv"
+
+genetic_algorithm:
+  population_size: 100
+  generations: 100
+  mutation_rate: 0.2
+  crossover_rate: 0.7
+  fitness_weights:
+    detection_quality: 0.60    # Standard detection focus
+    statistical_coherence: 0.30 # Good quality balance
+    diversity_bonus: 0.10      # Standard exploration
+
+cmaes_algorithm:
+  population_size: null
+  generations: 150
+  initial_sigma: 0.8
+  fitness_weights:
+    rate_score: 0.25          # Balanced rate control
+    separation_score: 0.30    # Strong separation focus
+    distribution_score: 0.15  # Good quality
+    stability_score: 0.15     # Good robustness
+    domain_score: 0.10        # Domain awareness
+    exploration_score: 0.03   # Light exploration
+    convergence_score: 0.02   # Anti-stagnation
+
+optimization:
+  algorithm: "cmaes"
+  use_optimization: true
+
+output:
+  results_dir: "results/balanced_detection"

@@ -1,0 +1,35 @@
+# Aggressive Detection - Catch more anomalies with exploration
+# Higher rate tolerance and parameter exploration
+
+data:
+  path: "data/Dati_wallbox_aggregati.csv"
+
+genetic_algorithm:
+  population_size: 120
+  generations: 120
+  mutation_rate: 0.25
+  crossover_rate: 0.7
+  fitness_weights:
+    detection_quality: 0.75    # High detection focus
+    statistical_coherence: 0.15 # Lower quality constraints
+    diversity_bonus: 0.10      # Standard exploration
+
+cmaes_algorithm:
+  population_size: null
+  generations: 180
+  initial_sigma: 1.0
+  fitness_weights:
+    rate_score: 0.35          # Higher rate tolerance
+    separation_score: 0.25    # Moderate separation
+    distribution_score: 0.10  # Less strict quality
+    stability_score: 0.10     # Reduced robustness focus
+    domain_score: 0.05        # Less domain specific
+    exploration_score: 0.10   # High exploration bonus
+    convergence_score: 0.05   # Anti-stagnation
+
+optimization:
+  algorithm: "genetic"
+  use_optimization: true
+
+output:
+  results_dir: "results/aggressive_detection"

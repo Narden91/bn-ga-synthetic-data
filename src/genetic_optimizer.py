@@ -37,6 +37,22 @@ class GeneticOptimizer:
         self.base_results_dir = "results"
         self.execution_results_dir = None
         os.makedirs(self.base_results_dir, exist_ok=True)
+        
+        # Load fitness weights from config
+        self.fitness_weights = config.get('fitness_weights', {
+            'detection_quality': 0.60,
+            'statistical_coherence': 0.30,
+            'diversity_bonus': 0.10
+        })
+        
+        # Validate weights sum to 1.0
+        total_weight = sum(self.fitness_weights.values())
+        if abs(total_weight - 1.0) > 1e-6:
+            print(f"Warning: GA fitness weights sum to {total_weight:.3f}, normalizing...")
+            self.fitness_weights = {k: v/total_weight for k, v in self.fitness_weights.items()}
+        
+        print(f"GA Fitness weights: {self.fitness_weights}")
+        
         self._setup_deap()
     
     def set_results_dir(self, results_dir: str):
@@ -386,15 +402,31 @@ class GeneticOptimizer:
         diversity_score = min(10, float(np.mean(diversity_factors) * 8))
         components['diversity_bonus'] = diversity_score
 
-        # Final fitness calculation with anti-convergence noise
-        total_fitness = (components['detection_quality'] + 
-                        components['statistical_coherence'] + 
-                        components['diversity_bonus'])
+        # Final fitness calculation with weights
+        weighted_components = {}
+        for component, score in components.items():
+            weight = self.fitness_weights.get(component, 0.0)
+            weighted_score = score * weight
+            weighted_components[f"{component}_weighted"] = weighted_score
+            # Keep original scores for analysis
+            weighted_components[component] = score
+        
+        # Calculate weighted total fitness
+        total_fitness = sum(components[comp] * self.fitness_weights[comp] 
+                           for comp in components.keys())
+        
+        # Scale to 0-100 range
+        total_fitness = total_fitness * 100
         
         # Add small random noise to prevent fitness plateaus
         convergence_prevention = random.uniform(-0.15, 0.15)
+        final_fitness = max(0.0, min(100.0, total_fitness + convergence_prevention))
         
-        return float(max(0.0, min(100.0, total_fitness + convergence_prevention))), components
+        # Store both original and weighted components for analysis
+        weighted_components['total_weighted'] = total_fitness
+        weighted_components['final_fitness'] = final_fitness
+        
+        return float(final_fitness), weighted_components
     
     def _calculate_overlap_coefficient(self, normal_values: np.ndarray, anomaly_values: np.ndarray) -> float:
         """Calculate overlap coefficient between normal and anomaly score distributions."""
@@ -475,23 +507,39 @@ class GeneticOptimizer:
             ax1.grid(True, alpha=0.3)
             ax1.set_ylim(0, 105)
 
-            # Plot 2: Best Individual Fitness Breakdown
+            # Plot 2: Enhanced Fitness Breakdown with Weights
             ax2 = axes[1]
             if self.best_individual and hasattr(self.best_individual, 'components'):
                 components = self.best_individual.components
-                names = ['Detection\nQuality', 'Statistical\nCoherence', 'Diversity\nBonus']
-                values = [components.get(k, 0) for k in ['detection_quality', 'statistical_coherence', 'diversity_bonus']]
-                colors = ['#e74c3c', '#3498db', '#2ecc71'][:len(names)]
-                bars = ax2.bar(names, values, color=colors, alpha=0.8)
-                ax2.bar_label(bars, fmt='%.1f')
-                ax2.set_title('Best Individual Fitness Breakdown', fontsize=14, fontweight='bold')
+                
+                # Show both original and weighted scores
+                comp_names = ['Detection\nQuality', 'Statistical\nCoherence', 'Diversity\nBonus']
+                original_values = [components.get(k, 0) for k in 
+                                  ['detection_quality', 'statistical_coherence', 'diversity_bonus']]
+                weighted_values = [components.get(f"{k}_weighted", 0) * 100 for k in 
+                                  ['detection_quality', 'statistical_coherence', 'diversity_bonus']]
+                
+                x = np.arange(len(comp_names))
+                width = 0.35
+                
+                bars1 = ax2.bar(x - width/2, original_values, width, label='Original Score', alpha=0.8, color='#3498db')
+                bars2 = ax2.bar(x + width/2, weighted_values, width, label='Weighted Contribution', alpha=0.8, color='#e74c3c')
+                
+                # Add value labels on bars
+                for bars in [bars1, bars2]:
+                    ax2.bar_label(bars, fmt='%.1f', fontsize=9)
+                
                 ax2.set_xlabel('Fitness Components')
-                ax2.set_ylabel('Component Score')
+                ax2.set_ylabel('Score')
+                ax2.set_title('Fitness Breakdown: Original vs Weighted', fontsize=14, fontweight='bold')
+                ax2.set_xticks(x)
+                ax2.set_xticklabels(comp_names)
+                ax2.legend()
                 ax2.grid(True, axis='y', alpha=0.3)
-                ax2.set_ylim(0, max(70, max(values) * 1.1))  # Adjust scale for new components
+                ax2.set_ylim(0, max(70, max(max(original_values), max(weighted_values)) * 1.1))
             else:
                 ax2.text(0.5, 0.5, 'No fitness breakdown available', ha='center', va='center', transform=ax2.transAxes)
-                ax2.set_title('Best Individual Fitness Breakdown', fontsize=14, fontweight='bold')
+                ax2.set_title('Fitness Breakdown: Original vs Weighted', fontsize=14, fontweight='bold')
 
             # Plot 3: Optimized Parameters
             ax3 = axes[2]

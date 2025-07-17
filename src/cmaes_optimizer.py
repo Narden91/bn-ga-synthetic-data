@@ -39,6 +39,26 @@ class CMAESOptimizer:
         self.base_results_dir = "results"
         self.execution_results_dir = None
         os.makedirs(self.base_results_dir, exist_ok=True)
+        
+        # Load fitness weights from config
+        self.fitness_weights = config.get('fitness_weights', {
+            'rate_score': 0.25,
+            'separation_score': 0.30,
+            'distribution_score': 0.15,
+            'stability_score': 0.15,
+            'domain_score': 0.10,
+            'exploration_score': 0.03,
+            'convergence_score': 0.02
+        })
+        
+        # Validate and normalize weights
+        total_weight = sum(self.fitness_weights.values())
+        if abs(total_weight - 1.0) > 1e-6:
+            print(f"Warning: CMA-ES fitness weights sum to {total_weight:.3f}, normalizing...")
+            self.fitness_weights = {k: v/total_weight for k, v in self.fitness_weights.items()}
+        
+        print(f"CMA-ES Fitness weights: {self.fitness_weights}")
+        
         self._define_parameters()
     
     def set_results_dir(self, results_dir: str):
@@ -530,16 +550,31 @@ class CMAESOptimizer:
             
         components['convergence_score'] = convergence_score + base_randomness
 
-        # Final fitness calculation with non-linear combination
-        total_fitness = sum(components.values())
+        # Apply weights to components
+        weighted_components = {}
+        for component, score in components.items():
+            weight = self.fitness_weights.get(component, 0.0)
+            weighted_score = score * weight
+            weighted_components[f"{component}_weighted"] = weighted_score
+            # Keep original scores for analysis
+            weighted_components[component] = score
         
-        # Apply final transformations
-        total_fitness = max(0, min(100, total_fitness))
+        # Calculate weighted total fitness
+        total_fitness = sum(components[comp] * self.fitness_weights[comp] 
+                           for comp in components.keys())
         
-        # Add small perturbation to break ties and maintain diversity
+        # Scale to 0-100 range
+        total_fitness = total_fitness * 100
+        
+        # Add small perturbation for diversity
         total_fitness += random.uniform(-0.05, 0.05)
+        final_fitness = max(0, min(100, total_fitness))
         
-        return total_fitness, components
+        # Store comprehensive results
+        weighted_components['total_weighted'] = total_fitness
+        weighted_components['final_fitness'] = final_fitness
+        
+        return final_fitness, weighted_components
     
     def _calculate_overlap_coefficient(self, normal_values: np.ndarray, anomaly_values: np.ndarray) -> float:
         """Calculate overlap coefficient between normal and anomaly score distributions."""
@@ -696,25 +731,36 @@ class CMAESOptimizer:
             ax1.grid(True, alpha=0.3)
             ax1.set_ylim(0, 105)
 
-            # Plot 2:  Fitness Breakdown
+            # Plot 2: Enhanced Fitness Breakdown with Weights
             ax2 = axes[1]
             if self.best_components:
+                comp_keys = ['rate_score', 'separation_score', 'distribution_score', 
+                            'stability_score', 'domain_score', 'exploration_score', 'convergence_score']
                 names = ['Rate', 'Separation', 'Distribution', 'Stability', 'Domain', 'Exploration', 'Convergence']
-                values = [self.best_components.get(k, 0) for k in 
-                         ['rate_score', 'separation_score', 'distribution_score', 
-                          'stability_score', 'domain_score', 'exploration_score', 'convergence_score']]
-                colors = ['#440154', '#31688e', '#35b779', '#fde725', '#ff6b6b', '#4ecdc4', '#95a5a6'][:len(names)]
-                bars = ax2.bar(names, values, color=colors, alpha=0.8)
-                ax2.bar_label(bars, fmt='%.1f')
-                ax2.set_title(' Fitness Breakdown (7 Components)', fontsize=14, fontweight='bold')
+                original_values = [self.best_components.get(k, 0) for k in comp_keys]
+                weighted_values = [self.best_components.get(f"{k}_weighted", 0) * 100 for k in comp_keys]
+                
+                x = np.arange(len(names))
+                width = 0.35
+                
+                bars1 = ax2.bar(x - width/2, original_values, width, label='Original Score', alpha=0.8, color='#3498db')
+                bars2 = ax2.bar(x + width/2, weighted_values, width, label='Weighted Contribution', alpha=0.8, color='#e74c3c')
+                
+                # Add value labels on bars
+                for bars in [bars1, bars2]:
+                    ax2.bar_label(bars, fmt='%.1f', fontsize=8, rotation=90)
+                
+                ax2.set_title('CMA-ES Fitness Breakdown: Original vs Weighted', fontsize=14, fontweight='bold')
                 ax2.set_xlabel('Fitness Components')
                 ax2.set_ylabel('Component Score')
+                ax2.legend()
                 ax2.grid(True, axis='y', alpha=0.3)
                 plt.setp(ax2.get_xticklabels(), rotation=45, ha='right')
+                ax2.set_ylim(0, max(35, max(max(original_values), max(weighted_values)) * 1.2))
             else:
                 ax2.text(0.5, 0.5, 'No fitness breakdown available', ha='center', va='center', 
                         transform=ax2.transAxes)
-                ax2.set_title(' Fitness Breakdown', fontsize=14, fontweight='bold')
+                ax2.set_title('CMA-ES Fitness Breakdown: Original vs Weighted', fontsize=14, fontweight='bold')
 
             # Plot 3: CMA-ES Sigma Evolution
             ax3 = axes[2]

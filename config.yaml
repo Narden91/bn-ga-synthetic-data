@@ -37,12 +37,24 @@ genetic_algorithm:
   mutation_rate: 0.2      # Mutation probability
   crossover_rate: 0.7     # Crossover probability
   tournament_size: 3      # Tournament selection size
+  fitness_weights:
+    detection_quality: 0.60      # 60% - Most important
+    statistical_coherence: 0.30  # 30% - Quality assurance
+    diversity_bonus: 0.10        # 10% - Exploration
 
 # CMA-ES optimization configuration
 cmaes_algorithm:
   population_size: null   # Let CMA-ES decide automatically
   generations: 150        # Number of iterations
   initial_sigma: 0.8      # Initial standard deviation for exploration
+  fitness_weights:
+    rate_score: 0.25           # 25% - Anomaly rate quality
+    separation_score: 0.30     # 30% - Most critical for detection
+    distribution_score: 0.15   # 15% - Statistical quality
+    stability_score: 0.15      # 15% - Robustness
+    domain_score: 0.10         # 10% - Domain-specific patterns
+    exploration_score: 0.03    # 3% - Parameter diversity
+    convergence_score: 0.02    # 2% - Anti-stagnation
 
 # Optimization settings
 optimization:

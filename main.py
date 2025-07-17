@@ -383,12 +383,26 @@ def main():
             'population_size': 100,   # Reasonable population for good optimization
             'generations': 100,       # Sufficient generations for convergence
             'mutation_rate': 0.2,
-            'crossover_rate': 0.7
+            'crossover_rate': 0.7,
+            'fitness_weights': {
+                'detection_quality': 0.65,      # Increase focus on detection
+                'statistical_coherence': 0.25,  # Reduce quality weight
+                'diversity_bonus': 0.10         # Keep exploration
+            }
         },
         'cmaes_algorithm': {
             'population_size': None,  # Let CMA-ES decide
             'generations': 150,       # More iterations for enhanced exploration
-            'initial_sigma': 0.8      # Higher initial exploration for better diversity
+            'initial_sigma': 0.8,      # Higher initial exploration for better diversity
+            'fitness_weights': {
+                'rate_score': 0.20,           # Anomaly rate importance
+                'separation_score': 0.35,     # Most critical - increase weight
+                'distribution_score': 0.15,   # Statistical quality
+                'stability_score': 0.15,      # Robustness
+                'domain_score': 0.10,         # Domain patterns
+                'exploration_score': 0.03,    # Parameter diversity
+                'convergence_score': 0.02     # Anti-stagnation
+            }
         },
         'optimization': {
             'algorithm': 'genetic',    # 'genetic' or 'cmaes'

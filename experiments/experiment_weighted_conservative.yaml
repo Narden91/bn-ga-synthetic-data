@@ -1,0 +1,35 @@
+# Conservative Detection - Prefer fewer false positives
+# Focus on high separation quality and strict rate control
+
+data:
+  path: "data/Dati_wallbox_aggregati.csv"
+
+genetic_algorithm:
+  population_size: 80
+  generations: 80
+  mutation_rate: 0.15
+  crossover_rate: 0.8
+  fitness_weights:
+    detection_quality: 0.50    # Moderate detection focus
+    statistical_coherence: 0.40 # High quality emphasis
+    diversity_bonus: 0.10      # Standard exploration
+
+cmaes_algorithm:
+  population_size: null
+  generations: 120
+  initial_sigma: 0.6
+  fitness_weights:
+    rate_score: 0.15          # Lower rate tolerance
+    separation_score: 0.45    # High separation priority
+    distribution_score: 0.20  # Quality focus
+    stability_score: 0.15     # Robustness
+    domain_score: 0.05        # Less domain specific
+    exploration_score: 0.00   # No exploration bonus
+    convergence_score: 0.00   # No convergence control
+
+optimization:
+  algorithm: "cmaes"
+  use_optimization: true
+
+output:
+  results_dir: "results/conservative_detection"
