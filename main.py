@@ -1,16 +1,12 @@
-"""
-Bayesian Anomaly Detection with Genetic Algorithm Optimization
-
-This module implements a scalable Bayesian Network-based anomaly detection system
-that handles large feature sets by dividing them into smaller groups.
-"""
-
 import pandas as pd
 import numpy as np
 import warnings
 import os
 import matplotlib.pyplot as plt
 from typing import Optional, Dict, Any, List
+import sys
+
+sys.dont_write_bytecode = True
 
 warnings.filterwarnings('ignore')
 
@@ -23,6 +19,7 @@ from src.genetic_optimizer import GeneticOptimizer
 from src.cmaes_optimizer import CMAESOptimizer
 from src.visualizer import ResultVisualizer
 from src.config_loader import ConfigLoader
+
 
 class BayesianAnomalyDetectionSystem:
     """
@@ -350,11 +347,11 @@ class BayesianAnomalyDetectionSystem:
 
 def main():
     """Main execution function with YAML configuration support."""
-    print("🔧 BAYESIAN ANOMALY DETECTION SYSTEM")
+    print("*** BAYESIAN ANOMALY DETECTION SYSTEM")
     print("=" * 50)
     
     # Option 1: Use default config.yaml file
-    print("📄 Loading configuration...")
+    print(">>> Loading configuration...")
     
     # config_path = "custom_config.yaml"  # Optional: use custom config file
     config_path = None  # Uses default config.yaml
@@ -416,9 +413,9 @@ def main():
         config_path=config_path   # Path to YAML config (None = default config.yaml)
     )
     
-    print(f"📊 Data source: {system.data_path}")
-    print(f"🔍 Optimizer: {system.config['optimization']['algorithm'].upper()}")
-    print(f"📦 Group size: {system.config['feature_grouping']['group_size']}")
+    print(f">>> Data source: {system.data_path}")
+    print(f">>> Optimizer: {system.config['optimization']['algorithm'].upper()}")
+    print(f">>> Group size: {system.config['feature_grouping']['group_size']}")
     print()
     
     # Run
@@ -429,7 +426,7 @@ def main():
         system.plot_bayesian_network(group_id=4)
 
     # Print analysis
-    print("\n📋 ANOMALY DETECTION ANALYSIS")
+    print("\n*** ANOMALY DETECTION ANALYSIS")
     print("=" * 40)
     analysis = system.get_anomaly_analysis()
     
@@ -445,7 +442,7 @@ def main():
     # Show the specific execution folder where results were saved
     execution_folder = system.visualizer.get_execution_folder_path()
     optimizer_type = system.config['optimization'].get('algorithm', 'genetic')
-    print(f"\n📁 All results saved to: {execution_folder}")
+    print(f"\n>>> All results saved to: {execution_folder}")
     print("   - CSV with anomaly scores and classifications")
     print("   - PNG plots showing distributions and timelines") 
     print("   - JSON files with parameters and summaries")
@@ -454,17 +451,15 @@ def main():
     print("   - Master summary file with execution metadata")
     print(f"   - Pipeline configuration: pipeline_config.json")
     
-    print(f"\n💡 Configuration was loaded from: config.yaml")
+    print(f"\n*** Configuration was loaded from: config.yaml")
     print("   You can modify config.yaml to change system behavior")
     print("   Or create custom config files and specify them in the code")
 
 
 def main_with_custom_config(custom_config_path: str):
-    print("🔧 BAYESIAN ANOMALY DETECTION SYSTEM (Custom Config)")
+    """Run the system with a custom configuration file."""
+    print("*** BAYESIAN ANOMALY DETECTION SYSTEM (Custom Config)")
     print("=" * 60)
-    
-    # Use a custom configuration file
-    # custom_config_path = "experiments/experiment_1.yaml" # experiment_2_cmaes.yaml
     
     # Minimal overrides (if any)
     minimal_overrides = {
@@ -479,41 +474,186 @@ def main_with_custom_config(custom_config_path: str):
             config_path=custom_config_path
         )
         results = system.run_full_pipeline()
-        print(f"✅ Experiment completed with config: {custom_config_path}")
+        
+        # Plot a representative Bayesian Network (e.g., for group 4)
+        if system.bayesian_networks:
+            system.plot_bayesian_network(group_id=4)
+        
+        # Print analysis
+        print("\n*** ANOMALY DETECTION ANALYSIS")
+        print("=" * 40)
+        analysis = system.get_anomaly_analysis()
+        
+        print(f"Total samples: {analysis['total_samples']}")
+        print(f"Anomalies detected: {analysis['total_anomalies']}")
+        print(f"Anomaly rate: {analysis['anomaly_percentage']:.2f}%")
+        print(f"Score range: [{analysis['anomaly_scores_stats']['min']:.4f}, {analysis['anomaly_scores_stats']['max']:.4f}]")
+        print(f"Mean score: {analysis['anomaly_scores_stats']['mean']:.4f}")
+        
+        if len(analysis['top_anomalies']) > 0:
+            print(f"\nTop anomalous samples (indices): {list(analysis['top_anomalies'][:5])}")
+        
+        # Show the specific execution folder where results were saved
+        execution_folder = system.visualizer.get_execution_folder_path()
+        optimizer_type = system.config['optimization'].get('algorithm', 'genetic')
+        print(f"\n>>> All results saved to: {execution_folder}")
+        print("   - CSV with anomaly scores and classifications")
+        print("   - PNG plots showing distributions and timelines") 
+        print("   - JSON files with parameters and summaries")
+        print("   - Text report with detailed analysis")
+        print(f"   - {optimizer_type.upper()} optimization results (if enabled)")
+        print("   - Master summary file with execution metadata")
+        print(f"   - Pipeline configuration: pipeline_config.json")
+        
+        print(f"\n*** Experiment completed with config: {custom_config_path}")
         
     except FileNotFoundError:
-        print(f"❌ Custom config file not found: {custom_config_path}")
+        print(f"ERROR: Custom config file not found: {custom_config_path}")
+        print("   Falling back to default configuration...")
+        system = BayesianAnomalyDetectionSystem()
+        results = system.run_full_pipeline()
+        
+    except Exception as e:
+        print(f"ERROR: Error loading config file {custom_config_path}: {str(e)}")
+        print("   This might be because the file is empty or has invalid format.")
         print("   Falling back to default configuration...")
         system = BayesianAnomalyDetectionSystem()
         results = system.run_full_pipeline()
 
 
+def display_experiment_info():
+    """Display detailed information about available experiments."""
+    print("\n*** DETAILED EXPERIMENT INFORMATION")
+    print("=" * 60)
+    
+    experiments = {
+        1: {
+            'name': 'Default Configuration',
+            'description': 'Built-in optimized settings with balanced parameters',
+            'optimizer': 'Genetic Algorithm',
+            'best_for': 'General purpose, first-time users'
+        },
+        2: {
+            'name': 'High-Performance GA',
+            'description': 'Thorough exploration with enhanced genetic algorithm',
+            'optimizer': 'Genetic Algorithm',
+            'best_for': 'When you need comprehensive parameter exploration'
+        },
+        3: {
+            'name': 'CMA-ES Optimization',
+            'description': 'Advanced parameter tuning with CMA-ES algorithm',
+            'optimizer': 'CMA-ES',
+            'best_for': 'Continuous parameter optimization, research purposes'
+        },
+        4: {
+            'name': 'Balanced Detection',
+            'description': 'Equal focus on detection quality and robustness',
+            'optimizer': 'CMA-ES',
+            'best_for': 'Production environments, balanced approach'
+        },
+        5: {
+            'name': 'Conservative Detection',
+            'description': 'Minimize false positives, high separation quality',
+            'optimizer': 'CMA-ES',
+            'best_for': 'When false positives are costly'
+        },
+        6: {
+            'name': 'Aggressive Detection',
+            'description': 'Catch more anomalies with parameter exploration',
+            'optimizer': 'Genetic Algorithm',
+            'best_for': 'When missing anomalies is costly'
+        },
+        7: {
+            'name': 'Custom Weights',
+            'description': 'Experimental fitness weight configurations',
+            'optimizer': 'Varies',
+            'best_for': 'Experimental purposes, custom scenarios'
+        },
+        8: {
+            'name': 'Standard Aggressive',
+            'description': 'Basic aggressive detection settings',
+            'optimizer': 'Varies',
+            'best_for': 'Simple aggressive detection'
+        },
+        9: {
+            'name': 'Standard Conservative',
+            'description': 'Basic conservative detection settings',
+            'optimizer': 'Varies',
+            'best_for': 'Simple conservative detection'
+        }
+    }
+    
+    for exp_id, info in experiments.items():
+        print(f"{exp_id}. {info['name']}")
+        print(f"   Description: {info['description']}")
+        print(f"   Optimizer: {info['optimizer']}")
+        print(f"   Best for: {info['best_for']}")
+        print()
+    
+    print("*** To run an experiment, change the 'experiment_to_run' value in main.py")
+    print("   and execute the script again.")
+    print("=" * 60)
+
+
 if __name__ == "__main__":
     # --- CHOOSE YOUR EXPERIMENT ---
-    # 1. Default configuration (from main function)
-    # 2. Balanced Detection (CMA-ES)
-    # 3. Conservative Detection (CMA-ES)
-    # 4. Aggressive Detection (Genetic Algorithm)
+    # Select an experiment by changing the experiment_to_run value below
     
-    experiment_to_run = 2  # <--- CHANGE THIS VALUE TO SELECT AN EXPERIMENT
+    print("*** AVAILABLE EXPERIMENTS:")
+    print("=" * 60)
+    print("1. Default Configuration - Built-in optimized settings")
+    print("2. High-Performance GA - Thorough exploration with Genetic Algorithm")
+    print("3. CMA-ES Optimization - Advanced CMA-ES parameter tuning")
+    print("4. Balanced Detection - Equal focus on quality and robustness (CMA-ES)")
+    print("5. Conservative Detection - Fewer false positives, high separation (CMA-ES)")
+    print("6. Aggressive Detection - More anomalies, higher exploration (GA)")
+    print("7. Custom Weights - Experimental weight configurations")
+    print("8. Standard Aggressive - Basic aggressive detection settings")
+    print("9. Standard Conservative - Basic conservative detection settings")
+    print("=" * 60)
+    
+    experiment_to_run = 7  # <--- CHANGE THIS VALUE TO SELECT AN EXPERIMENT
 
     if experiment_to_run == 1:
-        print("🚀 Running default configuration...")
+        print(">>> Running default configuration...")
         main()
     else:
         experiment_files = {
-            2: "experiments/experiment_weighted_balanced.yaml",
-            3: "experiments/experiment_weighted_conservative.yaml",
-            4: "experiments/experiment_weighted_aggressive.yaml",
+            2: "experiments/experiment_1.yaml",                    # High-Performance GA
+            3: "experiments/experiment_2_cmaes.yaml",              # CMA-ES Optimization
+            4: "experiments/experiment_weighted_balanced.yaml",    # Balanced Detection
+            5: "experiments/experiment_weighted_conservative.yaml", # Conservative Detection
+            6: "experiments/experiment_weighted_aggressive.yaml",   # Aggressive Detection
+            7: "experiments/experiment_custom_weights.yaml",       # Custom Weights
+            8: "experiments/experiment_aggressive.yaml",           # Standard Aggressive
+            9: "experiments/experiment_conservative.yaml",         # Standard Conservative
+        }
+        
+        experiment_descriptions = {
+            2: "High-Performance Genetic Algorithm - Thorough exploration and quality results",
+            3: "CMA-ES Optimization - Advanced parameter tuning with CMA-ES algorithm",
+            4: "Balanced Detection - Equal focus on detection quality and robustness",
+            5: "Conservative Detection - Minimize false positives, high separation quality",
+            6: "Aggressive Detection - Catch more anomalies with parameter exploration",
+            7: "Custom Weights - Experimental fitness weight configurations",
+            8: "Standard Aggressive - Basic aggressive detection settings",
+            9: "Standard Conservative - Basic conservative detection settings",
         }
         
         config_file = experiment_files.get(experiment_to_run)
         
         if config_file:
-            print(f"🚀 Running experiment with config: {config_file}")
+            description = experiment_descriptions.get(experiment_to_run, "No description available")
+            print(f">>> Running experiment {experiment_to_run}: {description}")
+            print(f">>> Config file: {config_file}")
+            print()
             main_with_custom_config(config_file)
         else:
-            print(f"❌ Invalid choice: {experiment_to_run}. Please choose from 1, 2, 3, or 4.")
-            print("Available experiments:")
+            print(f"ERROR: Invalid choice: {experiment_to_run}. Please choose from 1-9.")
+            print("\nAvailable experiments:")
+            print("  1: Default Configuration")
             for key, value in experiment_files.items():
-                print(f"  {key}: {value}")
+                desc = experiment_descriptions.get(key, "No description")
+                print(f"  {key}: {desc}")
+                print(f"      -> {value}")
+            print("\n*** Change 'experiment_to_run' value in main.py to select different experiment")

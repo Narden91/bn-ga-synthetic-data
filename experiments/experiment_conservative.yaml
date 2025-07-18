@@ -1,0 +1,64 @@
+# Standard Conservative Detection - Basic conservative settings
+# Simple configuration for minimizing false positives
+
+data:
+  path: "data/Dati_wallbox_aggregati.csv"
+
+# Data preprocessing configuration
+preprocessing:
+  missing_threshold: 0.5
+  scale_features: true
+  handle_categorical: true
+
+# Feature grouping configuration
+feature_grouping:
+  group_size: 10
+  strategy: "correlation"
+
+# Bayesian Network learning configuration
+bayesian_network:
+  structure_learning: "hc"
+  discretization_bins: 3
+  max_parents: 3
+
+# Anomaly detection configuration
+anomaly_detection:
+  threshold_percentile: 2.0           # Lower percentile for fewer anomalies
+  threshold_method: "percentile"
+  aggregation_method: "mean"
+  use_zscore_transformation: true
+  use_rank_transformation: false
+
+# Genetic Algorithm configuration
+genetic_algorithm:
+  population_size: 60
+  generations: 60
+  mutation_rate: 0.15
+  crossover_rate: 0.8
+  fitness_weights:
+    detection_quality: 0.50
+    statistical_coherence: 0.40
+    diversity_bonus: 0.10
+
+# CMA-ES configuration
+cmaes_algorithm:
+  population_size: null
+  generations: 80
+  initial_sigma: 0.5
+  fitness_weights:
+    rate_score: 0.15
+    separation_score: 0.40
+    distribution_score: 0.20
+    stability_score: 0.15
+    domain_score: 0.05
+    exploration_score: 0.03
+    convergence_score: 0.02
+
+# Optimization settings
+optimization:
+  algorithm: "cmaes"
+  use_optimization: true
+
+# Output settings
+output:
+  results_dir: "results/standard_conservative"

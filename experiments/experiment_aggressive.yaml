@@ -1,0 +1,64 @@
+# Standard Aggressive Detection - Basic aggressive settings
+# Simple configuration for catching more anomalies
+
+data:
+  path: "data/Dati_wallbox_aggregati.csv"
+
+# Data preprocessing configuration
+preprocessing:
+  missing_threshold: 0.5
+  scale_features: true
+  handle_categorical: true
+
+# Feature grouping configuration
+feature_grouping:
+  group_size: 10
+  strategy: "correlation"
+
+# Bayesian Network learning configuration
+bayesian_network:
+  structure_learning: "hc"
+  discretization_bins: 3
+  max_parents: 3
+
+# Anomaly detection configuration
+anomaly_detection:
+  threshold_percentile: 8.0           # Higher percentile for more anomalies
+  threshold_method: "percentile"
+  aggregation_method: "mean"
+  use_zscore_transformation: true
+  use_rank_transformation: false
+
+# Genetic Algorithm configuration
+genetic_algorithm:
+  population_size: 80
+  generations: 80
+  mutation_rate: 0.25
+  crossover_rate: 0.7
+  fitness_weights:
+    detection_quality: 0.70
+    statistical_coherence: 0.20
+    diversity_bonus: 0.10
+
+# CMA-ES configuration
+cmaes_algorithm:
+  population_size: null
+  generations: 100
+  initial_sigma: 0.9
+  fitness_weights:
+    rate_score: 0.30
+    separation_score: 0.25
+    distribution_score: 0.15
+    stability_score: 0.10
+    domain_score: 0.10
+    exploration_score: 0.05
+    convergence_score: 0.05
+
+# Optimization settings
+optimization:
+  algorithm: "genetic"
+  use_optimization: true
+
+# Output settings
+output:
+  results_dir: "results/standard_aggressive"

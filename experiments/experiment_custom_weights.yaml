@@ -1,0 +1,64 @@
+# Custom Weights Experiment - Experimental fitness configurations
+# Advanced configuration for testing different weight combinations
+
+data:
+  path: "data/Dati_wallbox_aggregati.csv"
+
+# Data preprocessing configuration
+preprocessing:
+  missing_threshold: 0.4
+  scale_features: true
+  handle_categorical: true
+
+# Feature grouping configuration
+feature_grouping:
+  group_size: 12
+  strategy: "correlation"
+
+# Bayesian Network learning configuration
+bayesian_network:
+  structure_learning: "hc"
+  discretization_bins: 4
+  max_parents: 4
+
+# Anomaly detection configuration
+anomaly_detection:
+  threshold_percentile: 5.0
+  threshold_method: "percentile"
+  aggregation_method: "weighted"
+  use_zscore_transformation: true
+  use_rank_transformation: false
+
+# Genetic Algorithm configuration with custom weights
+genetic_algorithm:
+  population_size: 120
+  generations: 120
+  mutation_rate: 0.3
+  crossover_rate: 0.6
+  fitness_weights:
+    detection_quality: 0.80      # Very high detection focus
+    statistical_coherence: 0.10  # Lower quality constraints
+    diversity_bonus: 0.10        # Standard exploration
+
+# CMA-ES configuration with experimental weights
+cmaes_algorithm:
+  population_size: null
+  generations: 200
+  initial_sigma: 1.2
+  fitness_weights:
+    rate_score: 0.40          # High rate importance
+    separation_score: 0.20    # Reduced separation focus
+    distribution_score: 0.05  # Minimal quality constraints
+    stability_score: 0.05     # Minimal robustness
+    domain_score: 0.15        # Higher domain focus
+    exploration_score: 0.10   # High exploration
+    convergence_score: 0.05   # Anti-stagnation
+
+# Optimization settings
+optimization:
+  algorithm: "genetic"
+  use_optimization: true
+
+# Output settings
+output:
+  results_dir: "results/custom_weights"

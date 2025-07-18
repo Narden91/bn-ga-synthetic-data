@@ -4,6 +4,31 @@
 data:
   path: "data/Dati_wallbox_aggregati.csv"
 
+# Data preprocessing configuration
+preprocessing:
+  missing_threshold: 0.5  # Drop columns with >50% missing values
+  scale_features: true    # Apply StandardScaler to numeric features
+  handle_categorical: true # Encode categorical variables
+
+# Feature grouping configuration
+feature_grouping:
+  group_size: 10          # Number of features per group (smaller for better BN learning)
+  strategy: "correlation" # Options: 'random', 'correlation', 'domain', 'variance'
+
+# Bayesian Network learning configuration
+bayesian_network:
+  structure_learning: "hc"     # Options: 'naive_bayes', 'pc', 'hc', 'mmhc'
+  discretization_bins: 3       # Number of bins for discretization (fewer for better learning)
+  max_parents: 3               # Maximum number of parent nodes
+
+# Anomaly detection configuration
+anomaly_detection:
+  threshold_percentile: 4.0           # Bottom n% as anomalies
+  threshold_method: "percentile"      # Options: 'percentile', 'std', 'iqr', 'adaptive'
+  aggregation_method: "mean"          # Options: 'mean', 'min', 'max', 'median', 'weighted', 'sum'
+  use_zscore_transformation: true     # Apply z-score transformation before thresholding
+  use_rank_transformation: false     # Apply rank-based transformation
+
 genetic_algorithm:
   population_size: 80
   generations: 80
