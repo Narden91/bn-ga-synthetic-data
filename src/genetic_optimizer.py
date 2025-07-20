@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 from deap import creator, base, tools, algorithms
 from typing import Dict, List, Tuple, Optional
 import random
@@ -10,8 +9,8 @@ import os
 import json
 import traceback
 from scipy import stats
-from sklearn.metrics import silhouette_score
-from sklearn.cluster import KMeans
+from .fitness_evaluator import FitnessEvaluator
+from .optimizer_utils import determine_threshold, normalize_bn_weights, decode_individual_parameters
 
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -66,6 +65,9 @@ class GeneticOptimizer:
         
         print(f"🧬 GA Optimizer for BN Weight Optimization")
         print(f"   Fitness components: {self.fitness_components}")
+        
+        # Initialize shared fitness evaluator
+        self.fitness_evaluator = FitnessEvaluator(self.fitness_components)
         
         self._deap_initialized = False
     
@@ -243,17 +245,19 @@ class GeneticOptimizer:
             # Decode individual to get parameters
             params = self._decode_individual(individual)
             
-            # Calculate weighted anomaly scores using custom BN weights
-            anomaly_scores = self._compute_weighted_anomaly_scores(
+            # Calculate weighted anomaly scores using shared evaluator
+            anomaly_scores = self.fitness_evaluator.compute_weighted_anomaly_scores(
                 self.likelihood_scores, params['bn_weights']
             )
             
             # Determine threshold and identify anomalies
-            threshold = self._determine_threshold(anomaly_scores, params['threshold_percentile'])
+            threshold = self.fitness_evaluator.determine_threshold(
+                anomaly_scores, params['threshold_percentile']
+            )
             anomaly_indices = np.where(anomaly_scores > threshold)[0]
             
-            # Calculate fitness components
-            fitness = self._calculate_fitness_score(
+            # Calculate fitness using shared evaluator
+            fitness = self.fitness_evaluator.evaluate_fitness(
                 anomaly_scores, anomaly_indices, params
             )
             
@@ -295,21 +299,12 @@ class GeneticOptimizer:
 
     def _determine_threshold(self, anomaly_scores: np.ndarray, threshold_percentile: float) -> float:
         """Determine threshold using percentile method."""
-        return np.percentile(anomaly_scores, 100 - threshold_percentile)
+        return determine_threshold(anomaly_scores, threshold_percentile)
 
     def _calculate_fitness_score(self, anomaly_scores: np.ndarray, 
                                 anomaly_indices: np.ndarray, params: Dict) -> float:
         """
-        Calculate comprehensive fitness score for BN weight optimization.
-        
-        This function implements a focused fitness evaluation specifically designed
-        for optimizing Bayesian Network weights to improve anomaly detection.
-        
-        Fitness Components (0-100 scale):
-        1. Separation Quality (45%): Cohen's d effect size between anomaly/normal distributions
-        2. Detection Rate (25%): Reward for target anomaly rates (2-6%)
-        3. Threshold Robustness (20%): Stability across neighboring threshold values
-        4. Weight Diversity (10%): Prevent degenerate solutions with few active weights
+        Calculate fitness score using shared FitnessEvaluator.
         
         Args:
             anomaly_scores (np.ndarray): All anomaly scores from weighted BN combination
@@ -319,206 +314,7 @@ class GeneticOptimizer:
         Returns:
             float: Overall fitness score (0-100)
         """
-        n_samples = len(anomaly_scores)
-        n_anomalies = len(anomaly_indices)
-        
-        # Handle degenerate cases
-        if n_anomalies == 0:
-            return 0.0  # No anomalies detected
-        if n_anomalies >= n_samples * 0.5:
-            return 0.0  # Too many anomalies (likely poor threshold)
-            
-        # Split data into anomaly and normal groups
-        normal_indices = np.setdiff1d(np.arange(n_samples), anomaly_indices)
-        anomaly_values = anomaly_scores[anomaly_indices]
-        normal_values = anomaly_scores[normal_indices]
-        
-        # Component scores
-        components = {}
-        
-        # 1. SEPARATION QUALITY (45 points) - Most important component
-        components['separation'] = self._evaluate_separation_quality(normal_values, anomaly_values)
-        
-        # 2. DETECTION RATE (25 points) - Target realistic anomaly rates
-        anomaly_rate = (n_anomalies / n_samples) * 100
-        components['detection_rate'] = self._evaluate_detection_rate(anomaly_rate)
-        
-        # 3. THRESHOLD ROBUSTNESS (20 points) - Stability across thresholds
-        components['robustness'] = self._evaluate_threshold_robustness(
-            anomaly_scores, params['threshold_percentile']
-        )
-        
-        # 4. WEIGHT DIVERSITY (10 points) - Encourage diverse weight usage
-        components['diversity'] = self._evaluate_weight_diversity(params['bn_weights'])
-        
-        # Calculate weighted total fitness
-        total_fitness = (
-            components['separation'] * self.fitness_components['separation_quality'] +
-            components['detection_rate'] * self.fitness_components['detection_rate'] +
-            components['robustness'] * self.fitness_components['threshold_robustness'] +
-            components['diversity'] * self.fitness_components['weight_diversity']
-        ) * 100
-        
-        return max(0.0, min(100.0, total_fitness))
-
-    def _evaluate_separation_quality(self, normal_values: np.ndarray, 
-                                   anomaly_values: np.ndarray) -> float:
-        """
-        Evaluate separation quality using Cohen's d effect size.
-        
-        Cohen's d interpretation:
-        - 0.2: Small effect
-        - 0.5: Medium effect  
-        - 0.8: Large effect
-        - 1.2+: Very large effect (ideal for anomaly detection)
-        
-        Returns:
-            float: Separation score (0.0 to 1.0)
-        """
-        try:
-            if len(normal_values) < 2 or len(anomaly_values) < 2:
-                return 0.0
-                
-            # Calculate means
-            normal_mean = np.mean(normal_values)
-            anomaly_mean = np.mean(anomaly_values)
-            
-            # Calculate pooled standard deviation
-            normal_var = np.var(normal_values, ddof=1) if len(normal_values) > 1 else np.var(normal_values)
-            anomaly_var = np.var(anomaly_values, ddof=1) if len(anomaly_values) > 1 else np.var(anomaly_values)
-            
-            pooled_std = np.sqrt(
-                ((len(normal_values) - 1) * normal_var + (len(anomaly_values) - 1) * anomaly_var) /
-                (len(normal_values) + len(anomaly_values) - 2)
-            )
-            
-            if pooled_std < 1e-8:
-                return 0.0
-                
-            # Calculate Cohen's d
-            cohens_d = abs(anomaly_mean - normal_mean) / pooled_std
-            
-            # Convert to score (sigmoid-like function targeting d > 1.2)
-            # Score approaches 1.0 as Cohen's d approaches 2.0+
-            separation_score = min(1.0, cohens_d / 2.0)
-            
-            # Bonus for very large effect sizes
-            if cohens_d > 1.5:
-                separation_score = min(1.0, separation_score + 0.1)
-                
-            return separation_score
-            
-        except Exception:
-            return 0.0
-
-    def _evaluate_detection_rate(self, anomaly_rate: float) -> float:
-        """
-        Evaluate anomaly detection rate against target ranges.
-        
-        Target rates for electrical data:
-        - Primary target: 3-5% (realistic for real anomalies)
-        - Secondary target: 1-2% (conservative detection)
-        - Tertiary target: 6-8% (aggressive but acceptable)
-        
-        Args:
-            anomaly_rate (float): Percentage of samples detected as anomalies
-            
-        Returns:
-            float: Detection rate score (0.0 to 1.0)
-        """
-        # Multi-modal scoring to reward different useful ranges
-        primary_score = np.exp(-0.5 * ((anomaly_rate - 4.0) / 1.0) ** 2)      # Target: 4% ± 1%
-        secondary_score = 0.8 * np.exp(-0.5 * ((anomaly_rate - 1.5) / 0.5) ** 2)  # Target: 1.5% ± 0.5%  
-        tertiary_score = 0.6 * np.exp(-0.5 * ((anomaly_rate - 7.0) / 1.5) ** 2)   # Target: 7% ± 1.5%
-        
-        return max(primary_score, secondary_score, tertiary_score)
-
-    def _evaluate_threshold_robustness(self, anomaly_scores: np.ndarray, 
-                                     target_percentile: float) -> float:
-        """
-        Evaluate stability of anomaly detection across nearby threshold values.
-        
-        A robust solution should produce similar anomaly counts when the threshold
-        is slightly perturbed, indicating a stable separation.
-        
-        Args:
-            anomaly_scores (np.ndarray): All anomaly scores
-            target_percentile (float): Target threshold percentile
-            
-        Returns:
-            float: Robustness score (0.0 to 1.0)
-        """
-        try:
-            # Test neighboring thresholds
-            test_percentiles = [
-                max(1.0, target_percentile - 0.5),
-                target_percentile,
-                min(10.0, target_percentile + 0.5)
-            ]
-            
-            anomaly_counts = []
-            for perc in test_percentiles:
-                threshold = np.percentile(anomaly_scores, 100 - perc)
-                count = np.sum(anomaly_scores > threshold)
-                anomaly_counts.append(count)
-            
-            if len(anomaly_counts) < 2:
-                return 0.5
-                
-            # Calculate coefficient of variation (lower = more stable)
-            mean_count = np.mean(anomaly_counts)
-            std_count = np.std(anomaly_counts)
-            
-            if mean_count < 1e-8:
-                return 0.0
-                
-            cv = std_count / mean_count
-            
-            # Convert to robustness score (lower CV = higher robustness)
-            robustness_score = np.exp(-cv * 5)  # Exponential decay for CV
-            
-            return min(1.0, robustness_score)
-            
-        except Exception:
-            return 0.5
-
-    def _evaluate_weight_diversity(self, bn_weights: np.ndarray) -> float:
-        """
-        Evaluate diversity of BN weights to prevent degenerate solutions.
-        
-        Encourages solutions that use multiple BNs rather than focusing on just one.
-        
-        Args:
-            bn_weights (np.ndarray): Normalized BN weights
-            
-        Returns:
-            float: Diversity score (0.0 to 1.0)
-        """
-        try:
-            # Calculate entropy of weight distribution
-            # Add small epsilon to avoid log(0)
-            weights_with_epsilon = bn_weights + 1e-8
-            weights_normalized = weights_with_epsilon / np.sum(weights_with_epsilon)
-            
-            # Shannon entropy
-            entropy = -np.sum(weights_normalized * np.log(weights_normalized))
-            max_entropy = np.log(len(bn_weights))  # Maximum possible entropy
-            
-            if max_entropy < 1e-8:
-                return 1.0
-                
-            # Normalize entropy to 0-1 range
-            diversity_score = entropy / max_entropy
-            
-            # Bonus for reasonably balanced weights (not too uniform, not too concentrated)
-            effective_weights = np.sum(bn_weights > 0.05)  # Count significant weights
-            if 3 <= effective_weights <= len(bn_weights) * 0.7:  # Sweet spot
-                diversity_score = min(1.0, diversity_score + 0.1)
-                
-            return diversity_score
-            
-        except Exception:
-            return 0.5
+        return self.fitness_evaluator.evaluate_fitness(anomaly_scores, anomaly_indices, params)
 
     def optimize(self, likelihood_scores: pd.DataFrame, data: pd.DataFrame) -> Dict:
         """
@@ -700,9 +496,6 @@ class GeneticOptimizer:
             return
             
         try:
-            import os
-            import json
-            
             # Save best parameters
             results = {
                 'best_fitness': float(hall_of_fame[0].fitness.values[0]),
@@ -735,7 +528,6 @@ class GeneticOptimizer:
             
         try:
             import matplotlib.pyplot as plt
-            import os
             
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
             

@@ -3,6 +3,8 @@ import numpy as np
 import warnings
 import os
 import matplotlib.pyplot as plt
+import json
+import traceback
 from typing import Optional, Dict, Any, List
 import sys
 
@@ -622,9 +624,7 @@ class BayesianAnomalyDetectionSystem:
             return
         
         try:
-            import matplotlib.pyplot as plt
             import seaborn as sns
-            import numpy as np
             from matplotlib.patches import Rectangle
             from matplotlib.gridspec import GridSpec
             
@@ -954,7 +954,6 @@ class BayesianAnomalyDetectionSystem:
             
         except Exception as e:
             print(f"     Warning: Could not create comparison plots: {str(e)}")
-            import traceback
             traceback.print_exc()
     
     def _get_quality_score(self, value, metric_type):
@@ -982,9 +981,6 @@ class BayesianAnomalyDetectionSystem:
     def _create_summary_comparison_plot(self, baseline_results, optimized_results, optimizer_type):
         """Create a simplified summary comparison plot."""
         try:
-            import matplotlib.pyplot as plt
-            import numpy as np
-            
             # Create simplified summary plot
             fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
             fig.suptitle(f'{optimizer_type.upper()} Optimization: Before vs After Summary', 
@@ -1147,7 +1143,6 @@ CONCLUSION:
     def _save_comprehensive_results(self):
         """Save all results to the results folder."""
         try:
-            import json
             from datetime import datetime
             
             # Use the visualizer's execution folder instead of creating separate timestamped files

@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from typing import List, Dict, Optional, Tuple
 import warnings
 import os
@@ -35,7 +36,6 @@ class ResultVisualizer:
         self.get_results_dir()
         
         try:
-            import matplotlib.pyplot as plt
             import seaborn as sns
             from datetime import datetime
             
@@ -65,8 +65,6 @@ class ResultVisualizer:
     def _auto_save_figures(self):
         """Automatically save all open figures."""
         try:
-            import matplotlib.pyplot as plt
-            
             figure_names = [
                 'anomaly_score_distribution',
                 'likelihood_heatmap',
@@ -101,8 +99,6 @@ class ResultVisualizer:
             anomaly_indices (np.ndarray): Anomaly indices
         """
         try:
-            import matplotlib.pyplot as plt
-            
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
             
             # Plot 1: Histogram of all scores
@@ -159,7 +155,6 @@ class ResultVisualizer:
             anomaly_indices (np.ndarray): Anomaly indices
         """
         try:
-            import matplotlib.pyplot as plt
             import seaborn as sns
             
             # Limit to reasonable number of samples for visualization
@@ -224,8 +219,6 @@ class ResultVisualizer:
             anomaly_indices (np.ndarray): Anomaly indices
         """
         try:
-            import matplotlib.pyplot as plt
-            
             # Create larger figure with better aspect ratio
             fig, ax = plt.subplots(figsize=(16, 8))
             
@@ -305,8 +298,6 @@ class ResultVisualizer:
             anomaly_indices (np.ndarray): Anomaly indices
         """
         try:
-            import matplotlib.pyplot as plt
-            
             if len(anomaly_indices) == 0:
                 print("     No anomalies to analyze group contributions")
                 return
@@ -458,7 +449,6 @@ class ResultVisualizer:
         """
         try:
             import os
-            import matplotlib.pyplot as plt
             from datetime import datetime
             
             # Use results directory by default
