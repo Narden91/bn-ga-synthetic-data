@@ -3,13 +3,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from deap import creator, base, tools, algorithms
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import random
 import warnings
 import os
 import json
 import traceback
 from scipy import stats
+from sklearn.metrics import silhouette_score
+from sklearn.cluster import KMeans
 
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -17,43 +19,55 @@ warnings.filterwarnings('ignore', category=UserWarning)
 
 class GeneticOptimizer:
     """
-    Optimizes anomaly detection parameters using a genetic algorithm.
+    Genetic Algorithm optimizer for Bayesian Network weight optimization.
     
-    Uses DEAP-based genetic algorithm to find optimal hyperparameters for
-    the AnomalyDetector with multi-objective fitness function.
+    Optimizes weights for 17 BN outputs to find the best weighted combination
+    that maximizes anomaly detection quality through threshold optimization.
+    
+    Architecture:
+    - Individual: [w1, w2, ..., w17, threshold_percentile] where weights sum to 1.0
+    - Fitness: Multi-objective function balancing separation quality and detection rate
+    - Simplified design focused specifically on weight optimization
     """
 
     def __init__(self, config: Dict):
-        """
-        Initializes the genetic optimizer and sets up DEAP components.
-        
-        Args:
-            config (Dict): Configuration for the genetic algorithm.
-        """
+        """Initialize the genetic optimizer."""
         self.config = config
         self.toolbox = None
         self.best_individual = None
-        self.convergence_data = {}
+        self.best_fitness = 0.0
+        self.best_params = None
+        self.convergence_data = []
+        
+        # Results directory
         self.base_results_dir = "results"
         self.execution_results_dir = None
+        
+        # Data storage
+        self.likelihood_scores = None
+        self.original_data = None
+        self.n_bn_groups = None
+        
         os.makedirs(self.base_results_dir, exist_ok=True)
         
-        # Load fitness weights from config
-        self.fitness_weights = config.get('fitness_weights', {
-            'detection_quality': 0.60,
-            'statistical_coherence': 0.30,
-            'diversity_bonus': 0.10
-        })
+        # Focused fitness components for BN weight optimization
+        self.fitness_components = {
+            'separation_quality': 0.45,     # Cohen's d between anomaly and normal distributions
+            'detection_rate': 0.25,         # Target anomaly detection rate (2-6%)  
+            'threshold_robustness': 0.20,   # Stability across different threshold values
+            'weight_diversity': 0.10        # Encourage diverse weight distributions
+        }
         
-        # Validate weights sum to 1.0
-        total_weight = sum(self.fitness_weights.values())
+        # Validate fitness weights
+        total_weight = sum(self.fitness_components.values())
         if abs(total_weight - 1.0) > 1e-6:
-            print(f"Warning: GA fitness weights sum to {total_weight:.3f}, normalizing...")
-            self.fitness_weights = {k: v/total_weight for k, v in self.fitness_weights.items()}
+            print(f"⚠️  Normalizing fitness weights from {total_weight:.3f} to 1.0")
+            self.fitness_components = {k: v/total_weight for k, v in self.fitness_components.items()}
         
-        print(f"GA Fitness weights: {self.fitness_weights}")
+        print(f"🧬 GA Optimizer for BN Weight Optimization")
+        print(f"   Fitness components: {self.fitness_components}")
         
-        self._setup_deap()
+        self._deap_initialized = False
     
     def set_results_dir(self, results_dir: str):
         """Set the execution results directory."""
@@ -70,576 +84,724 @@ class GeneticOptimizer:
         """Property to get the current results directory."""
         return self.get_results_dir()
 
-    def _setup_deap(self):
-        """Sets up DEAP genetic algorithm components."""
+    def _setup_deap(self, n_bn_groups: int):
+        """
+        Sets up DEAP genetic algorithm components based on number of BN groups.
+        
+        Args:
+            n_bn_groups (int): Number of Bayesian Network groups (likelihood matrix columns)
+        """
+        if self._deap_initialized:
+            return
+            
+        self.n_bn_groups = n_bn_groups
+        print(f"🔧 Setting up DEAP for {n_bn_groups} BN groups")
+        
+        # Create DEAP types - Clear any existing types first
+        try:
+            del creator.FitnessMax
+            del creator.Individual
+        except AttributeError:
+            pass  # Types don't exist yet
+            
         creator.create("FitnessMax", base.Fitness, weights=(1.0,))
-        creator.create("Individual", list, fitness=creator.FitnessMax, components=None)
+        creator.create("Individual", list, fitness=creator.FitnessMax)
 
         self.toolbox = base.Toolbox()
-        self._define_parameters()
+        
+        # Individual structure: [bn_weight_1, bn_weight_2, ..., bn_weight_n, threshold_percentile]
+        # Weights will be normalized to sum to 1.0, threshold_percentile in range [1.0, 10.0]
+        self.individual_size = n_bn_groups + 1
 
-        self.toolbox.register("individual", tools.initIterate, creator.Individual, self._create_individual)
+        # Register genetic operators
+        self.toolbox.register("individual", self._create_individual)
         self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
         self.toolbox.register("mate", self._crossover)
         self.toolbox.register("mutate", self._mutate)
         self.toolbox.register("select", tools.selTournament, tournsize=3)
         self.toolbox.register("evaluate", self._evaluate_fitness)
+        
+        print(f"📊 Individual structure: {n_bn_groups} BN weights + 1 threshold = {self.individual_size} genes")
+        self._deap_initialized = True
 
-    def _define_parameters(self):
-        """Defines the parameter space for optimization."""
-        self.param_bounds = {
-            'threshold_percentile': (1.0, 10.0),
-            'aggregation_method_idx': (0, 4),
-            'use_zscore': (0, 1),
-            'threshold_method_idx': (0, 3)
-        }
-        self.aggregation_methods = ['mean', 'min', 'median', 'weighted', 'sum']
-        self.threshold_methods = ['percentile', 'std', 'iqr', 'adaptive']
+    def _create_individual(self):
+        """
+        Create a random individual representing BN weights + threshold percentile.
+        
+        Returns:
+            Individual with BN weights (will be normalized) + threshold_percentile
+        """
+        genes = []
+        
+        # BN weights (0.1 to 1.0, will be normalized to sum to 1)
+        for _ in range(self.n_bn_groups):
+            genes.append(random.uniform(0.1, 1.0))
+            
+        # Threshold percentile (1.0 to 10.0)
+        genes.append(random.uniform(1.0, 10.0))
+        
+        return creator.Individual(genes)
 
-    def _create_individual(self) -> List:
-        """Creates a random individual (a set of parameters)."""
-        individual = []
-        for param, (min_val, max_val) in self.param_bounds.items():
-            if 'idx' in param or param == 'use_zscore':
-                individual.append(random.randint(int(min_val), int(max_val)))
-            else:
-                individual.append(random.uniform(min_val, max_val))
-        return individual
-
-    def _decode_individual(self, individual: List) -> Dict:
-        """Converts an individual's gene list into a human-readable parameter dictionary."""
+    def _decode_individual(self, individual: List[float]) -> Dict:
+        """
+        Convert individual genes into interpretable parameters.
+        
+        Args:
+            individual (List[float]): Individual genome
+            
+        Returns:
+            Dict: Decoded parameters with normalized weights
+        """
+        # Extract BN weights and normalize them to sum to 1
+        raw_weights = np.array(individual[:self.n_bn_groups])
+        bn_weights = raw_weights / np.sum(raw_weights)  # Normalize to sum to 1
+        
+        # Extract threshold percentile
+        threshold_percentile = individual[self.n_bn_groups]
+        
         return {
-            'threshold_percentile': individual[0],
-            'aggregation_method': self.aggregation_methods[int(individual[1])],
-            'use_zscore_transformation': bool(individual[2]),
-            'threshold_method': self.threshold_methods[int(individual[3])]
+            'bn_weights': bn_weights,
+            'threshold_percentile': threshold_percentile,
+            'n_bn_groups': self.n_bn_groups,
+            'aggregation_method': 'weighted'  # GA uses weighted aggregation
         }
 
-    def _crossover(self, ind1: List, ind2: List) -> Tuple[List, List]:
-        """Performs crossover on two parent individuals."""
-        alpha = 0.5
-        for i in range(len(ind1)):
-            if random.random() < self.config.get('crossover_rate', 0.8):
-                if 'idx' not in list(self.param_bounds.keys())[i] and i != 2:
-                    gamma = (1 + 2 * alpha) * random.random() - alpha
-                    ind1[i], ind2[i] = (1 - gamma) * ind1[i] + gamma * ind2[i], (1 - gamma) * ind2[i] + gamma * ind1[i]
-                else:
-                    if random.random() < 0.5:
-                        ind1[i], ind2[i] = ind2[i], ind1[i]
-        self._enforce_bounds(ind1)
-        self._enforce_bounds(ind2)
+    def _crossover(self, ind1: List[float], ind2: List[float]) -> Tuple[List[float], List[float]]:
+        """
+        Perform crossover between two individuals.
+        
+        Args:
+            ind1, ind2 (List[float]): Parent individuals
+            
+        Returns:
+            Tuple[List[float], List[float]]: Offspring individuals
+        """
+        # Blend crossover for BN weights (continuous values)
+        alpha = 0.3  # Blend parameter
+        
+        for i in range(self.n_bn_groups):
+            if random.random() < 0.5:
+                v1, v2 = ind1[i], ind2[i]
+                range_val = abs(v1 - v2)
+                
+                # Create blended offspring
+                low = min(v1, v2) - alpha * range_val
+                high = max(v1, v2) + alpha * range_val
+                
+                ind1[i] = np.clip(random.uniform(low, high), 0.1, 1.0)
+                ind2[i] = np.clip(random.uniform(low, high), 0.1, 1.0)
+        
+        # Uniform crossover for threshold percentile
+        thresh_idx = self.n_bn_groups
+        if random.random() < 0.5:
+            ind1[thresh_idx], ind2[thresh_idx] = ind2[thresh_idx], ind1[thresh_idx]
+        
         return ind1, ind2
 
-    def _mutate(self, individual: List) -> Tuple[List]:
-        """Performs mutation on an individual."""
-        mutation_rate = self.config.get('mutation_rate', 0.1)
-        for i in range(len(individual)):
+    def _mutate(self, individual: List[float]) -> Tuple[List[float]]:
+        """
+        Perform mutation on an individual.
+        
+        Args:
+            individual (List[float]): Individual to mutate
+            
+        Returns:
+            Tuple[List[float]]: Mutated individual
+        """
+        mutation_rate = self.config.get('mutation_rate', 0.15)
+        
+        # Gaussian mutation for BN weights
+        for i in range(self.n_bn_groups):
             if random.random() < mutation_rate:
-                param_name = list(self.param_bounds.keys())[i]
-                min_val, max_val = self.param_bounds[param_name]
-                if 'idx' in param_name or param_name == 'use_zscore':
-                    individual[i] = random.randint(int(min_val), int(max_val))
-                else:
-                    sigma = (max_val - min_val) * 0.1
-                    individual[i] += random.gauss(0, sigma)
-        self._enforce_bounds(individual)
-        return individual,
+                # Gaussian mutation with adaptive sigma
+                sigma = 0.1  # Standard deviation for mutation
+                mutation_value = random.gauss(0, sigma)
+                individual[i] = np.clip(individual[i] + mutation_value, 0.1, 1.0)
+        
+        # Gaussian mutation for threshold percentile
+        thresh_idx = self.n_bn_groups
+        if random.random() < mutation_rate:
+            mutation_value = random.gauss(0, 0.5)  # Smaller sigma for threshold
+            individual[thresh_idx] = np.clip(individual[thresh_idx] + mutation_value, 1.0, 10.0)
+        
+        return (individual,)
 
-    def _enforce_bounds(self, individual: List):
-        """Ensures that all parameters within an individual are within their defined bounds."""
-        for i, (param, (min_val, max_val)) in enumerate(self.param_bounds.items()):
-            individual[i] = max(min_val, min(max_val, individual[i]))
-            if 'idx' in param or param == 'use_zscore':
-                individual[i] = int(round(individual[i]))
+    def _evaluate_fitness(self, individual: List[float]) -> Tuple[float]:
+        """
+        Evaluate fitness of an individual representing BN weights + threshold.
+        
+        Focuses on finding optimal weights that create the best separation
+        between anomaly and normal data points.
+        
+        Args:
+            individual (List[float]): Individual genome [bn_weights..., threshold_percentile]
+            
+        Returns:
+            Tuple[float]: Fitness score (higher is better)
+        """
+        try:
+            # Decode individual to get parameters
+            params = self._decode_individual(individual)
+            
+            # Calculate weighted anomaly scores using custom BN weights
+            anomaly_scores = self._compute_weighted_anomaly_scores(
+                self.likelihood_scores, params['bn_weights']
+            )
+            
+            # Determine threshold and identify anomalies
+            threshold = self._determine_threshold(anomaly_scores, params['threshold_percentile'])
+            anomaly_indices = np.where(anomaly_scores > threshold)[0]
+            
+            # Calculate fitness components
+            fitness = self._calculate_fitness_score(
+                anomaly_scores, anomaly_indices, params
+            )
+            
+            # Update best individual for tracking
+            if fitness > self.best_fitness:
+                self.best_fitness = fitness
+                self.best_params = params.copy()
+            
+            return (fitness,)
+            
+        except Exception as e:
+            # Return very low fitness for invalid individuals
+            print(f"⚠️  Fitness evaluation error: {e}")
+            return (0.0,)
+
+    def _compute_weighted_anomaly_scores(self, likelihood_scores: pd.DataFrame, 
+                                        bn_weights: np.ndarray) -> np.ndarray:
+        """
+        Compute weighted anomaly scores using optimized BN weights.
+        
+        Args:
+            likelihood_scores (pd.DataFrame): Likelihood matrix (samples x BN_groups)
+            bn_weights (np.ndarray): Normalized weights for each BN group
+            
+        Returns:
+            np.ndarray: Weighted anomaly scores (higher = more anomalous)
+        """
+        # Convert to numpy for efficient computation
+        likelihood_matrix = likelihood_scores.values
+        
+        # Compute weighted average of negative log-likelihoods
+        # Each BN produces log-likelihood values, we want to combine them weighted
+        weighted_log_likelihoods = np.average(likelihood_matrix, axis=1, weights=bn_weights)
+        
+        # Convert to anomaly scores (negative log-likelihood = higher anomaly score)
+        anomaly_scores = -weighted_log_likelihoods
+        
+        return anomaly_scores
+
+    def _determine_threshold(self, anomaly_scores: np.ndarray, threshold_percentile: float) -> float:
+        """Determine threshold using percentile method."""
+        return np.percentile(anomaly_scores, 100 - threshold_percentile)
+
+    def _calculate_fitness_score(self, anomaly_scores: np.ndarray, 
+                                anomaly_indices: np.ndarray, params: Dict) -> float:
+        """
+        Calculate comprehensive fitness score for BN weight optimization.
+        
+        This function implements a focused fitness evaluation specifically designed
+        for optimizing Bayesian Network weights to improve anomaly detection.
+        
+        Fitness Components (0-100 scale):
+        1. Separation Quality (45%): Cohen's d effect size between anomaly/normal distributions
+        2. Detection Rate (25%): Reward for target anomaly rates (2-6%)
+        3. Threshold Robustness (20%): Stability across neighboring threshold values
+        4. Weight Diversity (10%): Prevent degenerate solutions with few active weights
+        
+        Args:
+            anomaly_scores (np.ndarray): All anomaly scores from weighted BN combination
+            anomaly_indices (np.ndarray): Indices of detected anomalies
+            params (Dict): Current parameters including BN weights
+            
+        Returns:
+            float: Overall fitness score (0-100)
+        """
+        n_samples = len(anomaly_scores)
+        n_anomalies = len(anomaly_indices)
+        
+        # Handle degenerate cases
+        if n_anomalies == 0:
+            return 0.0  # No anomalies detected
+        if n_anomalies >= n_samples * 0.5:
+            return 0.0  # Too many anomalies (likely poor threshold)
+            
+        # Split data into anomaly and normal groups
+        normal_indices = np.setdiff1d(np.arange(n_samples), anomaly_indices)
+        anomaly_values = anomaly_scores[anomaly_indices]
+        normal_values = anomaly_scores[normal_indices]
+        
+        # Component scores
+        components = {}
+        
+        # 1. SEPARATION QUALITY (45 points) - Most important component
+        components['separation'] = self._evaluate_separation_quality(normal_values, anomaly_values)
+        
+        # 2. DETECTION RATE (25 points) - Target realistic anomaly rates
+        anomaly_rate = (n_anomalies / n_samples) * 100
+        components['detection_rate'] = self._evaluate_detection_rate(anomaly_rate)
+        
+        # 3. THRESHOLD ROBUSTNESS (20 points) - Stability across thresholds
+        components['robustness'] = self._evaluate_threshold_robustness(
+            anomaly_scores, params['threshold_percentile']
+        )
+        
+        # 4. WEIGHT DIVERSITY (10 points) - Encourage diverse weight usage
+        components['diversity'] = self._evaluate_weight_diversity(params['bn_weights'])
+        
+        # Calculate weighted total fitness
+        total_fitness = (
+            components['separation'] * self.fitness_components['separation_quality'] +
+            components['detection_rate'] * self.fitness_components['detection_rate'] +
+            components['robustness'] * self.fitness_components['threshold_robustness'] +
+            components['diversity'] * self.fitness_components['weight_diversity']
+        ) * 100
+        
+        return max(0.0, min(100.0, total_fitness))
+
+    def _evaluate_separation_quality(self, normal_values: np.ndarray, 
+                                   anomaly_values: np.ndarray) -> float:
+        """
+        Evaluate separation quality using Cohen's d effect size.
+        
+        Cohen's d interpretation:
+        - 0.2: Small effect
+        - 0.5: Medium effect  
+        - 0.8: Large effect
+        - 1.2+: Very large effect (ideal for anomaly detection)
+        
+        Returns:
+            float: Separation score (0.0 to 1.0)
+        """
+        try:
+            if len(normal_values) < 2 or len(anomaly_values) < 2:
+                return 0.0
+                
+            # Calculate means
+            normal_mean = np.mean(normal_values)
+            anomaly_mean = np.mean(anomaly_values)
+            
+            # Calculate pooled standard deviation
+            normal_var = np.var(normal_values, ddof=1) if len(normal_values) > 1 else np.var(normal_values)
+            anomaly_var = np.var(anomaly_values, ddof=1) if len(anomaly_values) > 1 else np.var(anomaly_values)
+            
+            pooled_std = np.sqrt(
+                ((len(normal_values) - 1) * normal_var + (len(anomaly_values) - 1) * anomaly_var) /
+                (len(normal_values) + len(anomaly_values) - 2)
+            )
+            
+            if pooled_std < 1e-8:
+                return 0.0
+                
+            # Calculate Cohen's d
+            cohens_d = abs(anomaly_mean - normal_mean) / pooled_std
+            
+            # Convert to score (sigmoid-like function targeting d > 1.2)
+            # Score approaches 1.0 as Cohen's d approaches 2.0+
+            separation_score = min(1.0, cohens_d / 2.0)
+            
+            # Bonus for very large effect sizes
+            if cohens_d > 1.5:
+                separation_score = min(1.0, separation_score + 0.1)
+                
+            return separation_score
+            
+        except Exception:
+            return 0.0
+
+    def _evaluate_detection_rate(self, anomaly_rate: float) -> float:
+        """
+        Evaluate anomaly detection rate against target ranges.
+        
+        Target rates for electrical data:
+        - Primary target: 3-5% (realistic for real anomalies)
+        - Secondary target: 1-2% (conservative detection)
+        - Tertiary target: 6-8% (aggressive but acceptable)
+        
+        Args:
+            anomaly_rate (float): Percentage of samples detected as anomalies
+            
+        Returns:
+            float: Detection rate score (0.0 to 1.0)
+        """
+        # Multi-modal scoring to reward different useful ranges
+        primary_score = np.exp(-0.5 * ((anomaly_rate - 4.0) / 1.0) ** 2)      # Target: 4% ± 1%
+        secondary_score = 0.8 * np.exp(-0.5 * ((anomaly_rate - 1.5) / 0.5) ** 2)  # Target: 1.5% ± 0.5%  
+        tertiary_score = 0.6 * np.exp(-0.5 * ((anomaly_rate - 7.0) / 1.5) ** 2)   # Target: 7% ± 1.5%
+        
+        return max(primary_score, secondary_score, tertiary_score)
+
+    def _evaluate_threshold_robustness(self, anomaly_scores: np.ndarray, 
+                                     target_percentile: float) -> float:
+        """
+        Evaluate stability of anomaly detection across nearby threshold values.
+        
+        A robust solution should produce similar anomaly counts when the threshold
+        is slightly perturbed, indicating a stable separation.
+        
+        Args:
+            anomaly_scores (np.ndarray): All anomaly scores
+            target_percentile (float): Target threshold percentile
+            
+        Returns:
+            float: Robustness score (0.0 to 1.0)
+        """
+        try:
+            # Test neighboring thresholds
+            test_percentiles = [
+                max(1.0, target_percentile - 0.5),
+                target_percentile,
+                min(10.0, target_percentile + 0.5)
+            ]
+            
+            anomaly_counts = []
+            for perc in test_percentiles:
+                threshold = np.percentile(anomaly_scores, 100 - perc)
+                count = np.sum(anomaly_scores > threshold)
+                anomaly_counts.append(count)
+            
+            if len(anomaly_counts) < 2:
+                return 0.5
+                
+            # Calculate coefficient of variation (lower = more stable)
+            mean_count = np.mean(anomaly_counts)
+            std_count = np.std(anomaly_counts)
+            
+            if mean_count < 1e-8:
+                return 0.0
+                
+            cv = std_count / mean_count
+            
+            # Convert to robustness score (lower CV = higher robustness)
+            robustness_score = np.exp(-cv * 5)  # Exponential decay for CV
+            
+            return min(1.0, robustness_score)
+            
+        except Exception:
+            return 0.5
+
+    def _evaluate_weight_diversity(self, bn_weights: np.ndarray) -> float:
+        """
+        Evaluate diversity of BN weights to prevent degenerate solutions.
+        
+        Encourages solutions that use multiple BNs rather than focusing on just one.
+        
+        Args:
+            bn_weights (np.ndarray): Normalized BN weights
+            
+        Returns:
+            float: Diversity score (0.0 to 1.0)
+        """
+        try:
+            # Calculate entropy of weight distribution
+            # Add small epsilon to avoid log(0)
+            weights_with_epsilon = bn_weights + 1e-8
+            weights_normalized = weights_with_epsilon / np.sum(weights_with_epsilon)
+            
+            # Shannon entropy
+            entropy = -np.sum(weights_normalized * np.log(weights_normalized))
+            max_entropy = np.log(len(bn_weights))  # Maximum possible entropy
+            
+            if max_entropy < 1e-8:
+                return 1.0
+                
+            # Normalize entropy to 0-1 range
+            diversity_score = entropy / max_entropy
+            
+            # Bonus for reasonably balanced weights (not too uniform, not too concentrated)
+            effective_weights = np.sum(bn_weights > 0.05)  # Count significant weights
+            if 3 <= effective_weights <= len(bn_weights) * 0.7:  # Sweet spot
+                diversity_score = min(1.0, diversity_score + 0.1)
+                
+            return diversity_score
+            
+        except Exception:
+            return 0.5
 
     def optimize(self, likelihood_scores: pd.DataFrame, data: pd.DataFrame) -> Dict:
         """
-        Runs the genetic algorithm optimization process.
+        Run genetic algorithm optimization to find optimal BN weights.
         
         Args:
-            likelihood_scores: Likelihood scores from the Bayesian Network.
-            data: Original data for validation.
+            likelihood_scores (pd.DataFrame): Likelihood matrix (samples x BN_groups)
+            data (pd.DataFrame): Original data for validation
             
         Returns:
-            A dictionary containing the best found parameters.
+            Dict: Best parameters found including optimized BN weights
         """
-        print("     Starting genetic algorithm optimization...")
+        print("🧬 Starting BN Weight Optimization with Genetic Algorithm...")
+        
+        # Store data for fitness evaluation
         self.likelihood_scores = likelihood_scores
         self.original_data = data
         
-        population_size = self.config.get('population_size', 50)
-        population = self.toolbox.population(n=population_size)
+        # Setup DEAP based on likelihood matrix dimensions
+        n_bn_groups = likelihood_scores.shape[1]
+        self._setup_deap(n_bn_groups)
         
-        stats = tools.Statistics(lambda ind: ind.fitness.values)
-        stats.register("avg", np.mean)
-        stats.register("std", np.std)
-        stats.register("min", np.min)
-        stats.register("max", np.max)
-        stats.register("median", np.median)
+        print(f"📊 Optimizing weights for {n_bn_groups} Bayesian Networks")
+        print(f"📈 Likelihood matrix shape: {likelihood_scores.shape}")
         
-        hof = tools.HallOfFame(1)
-
+        # GA parameters from config
+        population_size = self.config.get('population_size', 100)
+        n_generations = self.config.get('n_generations', 50)
+        crossover_prob = self.config.get('crossover_probability', 0.8)
+        mutation_prob = self.config.get('mutation_probability', 0.15)
+        
+        print(f"🔧 GA Config: Pop={population_size}, Gen={n_generations}, "
+              f"Cx={crossover_prob}, Mut={mutation_prob}")
+        
         try:
-            population, logbook = self._run_evolution(
-                population,
-                self.config.get('crossover_rate', 0.8),
-                self.config.get('mutation_rate', 0.1),
-                self.config.get('generations', 50),
-                stats,
-                hof
+            # Initialize population
+            population = self.toolbox.population(n=population_size)
+            
+            # Statistics tracking
+            stats = tools.Statistics(lambda ind: ind.fitness.values)
+            stats.register("avg", np.mean)
+            stats.register("std", np.std)
+            stats.register("min", np.min)
+            stats.register("max", np.max)
+            
+            # Hall of fame to store best individuals
+            hall_of_fame = tools.HallOfFame(5)
+            
+            # Initialize tracking
+            self.convergence_data = []
+            
+            # Run evolution
+            final_pop, logbook = self._run_evolution(
+                population, crossover_prob, mutation_prob, n_generations, 
+                stats, hall_of_fame
             )
             
-            self.best_individual = hof[0]
-            self.convergence_data = {
-                'generations': logbook.select('gen'),
-                'max_fitness': logbook.select('max'),
-                'avg_fitness': logbook.select('avg'),
-                'min_fitness': logbook.select('min'),
-                'std_fitness': logbook.select('std'),
-                'median_fitness': logbook.select('median')
-            }
+            # Extract best solution
+            best_individual = hall_of_fame[0]
+            best_params = self._decode_individual(best_individual)
+            best_fitness = best_individual.fitness.values[0]
             
-            best_params = self._decode_individual(self.best_individual)
-            self._save_optimization_results(best_params, hof)
-            self._create_fitness_plots()
-
-            print(f"     ✅ GA optimization completed. Best fitness: {self.best_individual.fitness.values[0]:.4f}")
-            print(f"     Results saved to '{self.results_dir}/'")
+            print(f"\n✅ GA Optimization completed!")
+            print(f"🏆 Best fitness: {best_fitness:.2f}/100")
+            print(f"🎯 Best threshold: {best_params['threshold_percentile']:.2f}%")
+            print(f"⚖️  Weight distribution:")
+            
+            # Show top 5 weights
+            weight_indices = np.argsort(best_params['bn_weights'])[::-1]
+            for i in range(min(5, len(weight_indices))):
+                idx = weight_indices[i]
+                weight = best_params['bn_weights'][idx]
+                print(f"   BN_{idx:2d}: {weight:.3f} ({weight*100:.1f}%)")
+            
+            # Save results if results directory is available
+            if hasattr(self, 'execution_results_dir') and self.execution_results_dir:
+                self._save_optimization_results(best_params, hall_of_fame, logbook)
+                self._create_optimization_plots()
+            
             return best_params
             
         except Exception as e:
-            print(f"     ❌ GA optimization failed: {e}")
-            return self._decode_individual(self._create_individual()) # Return random default
+            print(f"❌ GA optimization failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            # Return default equal weights
+            return self._get_default_weights(n_bn_groups)
 
-    def _run_evolution(self, population, cxpb, mutpb, ngen, stats, hof):
-        """Custom evolution loop with progress logging."""
+    def _run_evolution(self, population: List, crossover_prob: float, mutation_prob: float,
+                      n_generations: int, stats: tools.Statistics, 
+                      hall_of_fame: tools.HallOfFame) -> Tuple[List, tools.Logbook]:
+        """Execute the genetic algorithm evolution process."""
         logbook = tools.Logbook()
-        logbook.header = ['gen', 'nevals'] + (stats.fields if stats else [])
-
+        logbook.header = ['gen', 'nevals'] + stats.fields
+        
         # Initial evaluation
         invalid_ind = [ind for ind in population if not ind.fitness.valid]
-        fitnesses = self.toolbox.map(self.toolbox.evaluate, invalid_ind)
+        fitnesses = list(map(self.toolbox.evaluate, invalid_ind))
         for ind, fit in zip(invalid_ind, fitnesses):
-            ind.fitness.values = fit[0]
-            ind.components = fit[1]
+            ind.fitness.values = fit
 
-        hof.update(population)
+        # Record initial statistics
+        hall_of_fame.update(population)
         record = stats.compile(population)
         logbook.record(gen=0, nevals=len(invalid_ind), **record)
-        print(f"     Gen 0: Max={record.get('max', 0):.3f}, Avg={record.get('avg', 0):.3f}")
+        
+        # Track convergence
+        self.convergence_data.append({
+            'generation': 0,
+            'best_fitness': record['max'],
+            'avg_fitness': record['avg'],
+            'std_fitness': record['std']
+        })
+        
+        print(f"Gen 0: Best={record['max']:.2f}, Avg={record['avg']:.2f}, Std={record['std']:.2f}")
 
         # Evolution loop
-        for gen in range(1, ngen + 1):
+        for generation in range(1, n_generations + 1):
+            # Selection and variation
             offspring = self.toolbox.select(population, len(population))
-            offspring = algorithms.varAnd(offspring, self.toolbox, cxpb, mutpb)
-
-            invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
-            fitnesses = self.toolbox.map(self.toolbox.evaluate, invalid_ind)
-            for ind, fit in zip(invalid_ind, fitnesses):
-                ind.fitness.values = fit[0]
-                ind.components = fit[1]
-
-            hof.update(offspring)
-            population[:] = offspring
+            offspring = list(map(self.toolbox.clone, offspring))
             
-            record = stats.compile(population)
-            logbook.record(gen=gen, nevals=len(invalid_ind), **record)
+            # Apply crossover
+            for child1, child2 in zip(offspring[::2], offspring[1::2]):
+                if random.random() < crossover_prob:
+                    self.toolbox.mate(child1, child2)
+                    del child1.fitness.values
+                    del child2.fitness.values
+            
+            # Apply mutation
+            for mutant in offspring:
+                if random.random() < mutation_prob:
+                    self.toolbox.mutate(mutant)
+                    del mutant.fitness.values
+            
+            # Evaluate invalid individuals
+            invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
+            fitnesses = list(map(self.toolbox.evaluate, invalid_ind))
+            for ind, fit in zip(invalid_ind, fitnesses):
+                ind.fitness.values = fit
 
-            if gen % 10 == 0 or gen == ngen:
-                print(f"     Gen {gen}: Max={record.get('max', 0):.3f}, Avg={record.get('avg', 0):.3f}, Std={record.get('std', 0):.3f}")
-        
+            # Replace population
+            population[:] = offspring
+            hall_of_fame.update(population)
+            
+            # Record statistics
+            record = stats.compile(population)
+            logbook.record(gen=generation, nevals=len(invalid_ind), **record)
+            
+            # Track convergence
+            self.convergence_data.append({
+                'generation': generation,
+                'best_fitness': record['max'],
+                'avg_fitness': record['avg'], 
+                'std_fitness': record['std']
+            })
+            
+            # Progress reporting
+            if generation % 10 == 0 or generation == n_generations:
+                print(f"Gen {generation}: Best={record['max']:.2f}, Avg={record['avg']:.2f}, "
+                      f"Std={record['std']:.2f}")
+
         return population, logbook
 
-    def _evaluate_fitness(self, individual: List) -> Tuple[Tuple[float], Dict]:
-        """
-        Evaluates the fitness of an individual, returning the score and its components.
-        """
-        try:
-            params = self._decode_individual(individual)
-            from .anomaly_detector import AnomalyDetector # Local import to avoid circular dependency
-            
-            temp_detector = AnomalyDetector(params)
-            anomaly_scores, anomaly_indices = temp_detector.detect_anomalies(self.likelihood_scores, verbose=False)
-            
-            fitness, components = self._calculate_fitness(anomaly_scores, anomaly_indices, params)
-            return (fitness,), components
-            
-        except Exception:
-            return (-1000.0,), {} # Return very low fitness for invalid individuals
-
-    def _calculate_fitness(self, anomaly_scores: np.ndarray, 
-                           anomaly_indices: np.ndarray, params: Dict) -> Tuple[float, Dict]:
-        """
-        Improved fitness function for anomaly detection optimization.
-        
-        This simplified, robust fitness function focuses on three core aspects:
-        1. Anomaly Detection Quality (60 pts): Combined rate and separation quality with multi-modal targets
-        2. Statistical Coherence (30 pts): Robust quality metrics for the detection
-        3. Diversity Bonus (10 pts): Prevents premature convergence by rewarding exploration
-        
-        The function is designed to be more robust against premature convergence and
-        specifically tailored for anomaly detection effectiveness.
-        """
-        components = {
-            'detection_quality': 0.0,
-            'statistical_coherence': 0.0, 
-            'diversity_bonus': 0.0
+    def _get_default_weights(self, n_bn_groups: int) -> Dict:
+        """Return default equal weights as fallback."""
+        equal_weights = np.ones(n_bn_groups) / n_bn_groups
+        return {
+            'bn_weights': equal_weights,
+            'threshold_percentile': 5.0,
+            'n_bn_groups': n_bn_groups
         }
-        
-        num_samples = len(anomaly_scores)
-        num_anomalies = len(anomaly_indices)
 
-        # Early exit for degenerate cases
-        if num_anomalies == 0 or num_anomalies >= num_samples * 0.5:
-            return 0.0, components
-
-        anomaly_rate = (num_anomalies / num_samples) * 100
-        normal_indices = np.setdiff1d(np.arange(num_samples), anomaly_indices)
-        anomaly_values = anomaly_scores[anomaly_indices]
-        normal_values = anomaly_scores[normal_indices]
-
-        # Component 1: Anomaly Detection Quality (60 points)
-        # This combines rate appropriateness with separation quality
-        detection_score = 0.0
-        
-        # 1a. Multi-modal rate targets (30 points)
-        # Primary target: 3-5% (ideal for most anomaly detection)
-        # Secondary targets: 1-2% (strict) and 6-8% (relaxed)
-        primary_score = 25 * np.exp(-0.5 * ((anomaly_rate - 4.0) / 1.5) ** 2)
-        secondary_score = 20 * np.exp(-0.5 * ((anomaly_rate - 1.8) / 0.8) ** 2)
-        tertiary_score = 15 * np.exp(-0.5 * ((anomaly_rate - 7.0) / 1.5) ** 2)
-        rate_quality = max(primary_score, secondary_score, tertiary_score)
-        
-        # 1b. Enhanced separation quality (30 points)
-        separation_quality = 0.0
-        if len(normal_values) > 2 and len(anomaly_values) > 1:
-            mean_anomaly, std_anomaly = np.mean(anomaly_values), np.std(anomaly_values)
-            mean_normal, std_normal = np.mean(normal_values), np.std(normal_values)
-            
-            # Use robust pooled standard deviation
-            pooled_std = np.sqrt(((num_anomalies - 1) * std_anomaly**2 + 
-                                (len(normal_values) - 1) * std_normal**2) / (num_samples - 2))
-            
-            if pooled_std > 1e-6:
-                cohens_d = abs(mean_anomaly - mean_normal) / pooled_std
-                
-                # Non-linear scaling that rewards strong separation
-                if cohens_d >= 0.8:
-                    # Strong separation gets high reward with bonus for excellence
-                    separation_quality = 25 + 5 * (1 - np.exp(-(cohens_d - 0.8) * 1.5))
-                else:
-                    # Progressive reward for moderate separation
-                    separation_quality = 30 * (cohens_d / (cohens_d + 0.5))
-                
-                # Additional overlap penalty/bonus
-                overlap_coeff = self._calculate_overlap_coefficient(normal_values, anomaly_values)
-                separation_quality += (1 - overlap_coeff) * 5
-        
-        detection_score = min(60, rate_quality + separation_quality)
-        components['detection_quality'] = detection_score
-
-        # Component 2: Statistical Coherence (30 points)
-        # Measures overall quality and robustness of the detection
-        coherence_score = 0.0
-        
-        # 2a. Normal distribution quality (15 points)
-        if len(normal_values) > 5:
-            # Use multiple statistical tests for robustness
-            try:
-                # Shapiro-Wilk test for normality
-                _, shapiro_p = stats.shapiro(normal_values[:5000])  # Limit for large datasets
-                shapiro_score = min(10, shapiro_p * 15)
-                
-                # Anderson-Darling test (more sensitive)
-                try:
-                    ad_result = stats.anderson(normal_values, dist='norm')
-                    ad_stat = ad_result.statistic
-                    ad_critical = ad_result.critical_values
-                    ad_score = 5 if ad_stat < ad_critical[2] else 0  # 5% significance level
-                except:
-                    ad_score = 0
-                
-                coherence_score += shapiro_score + ad_score
-            except:
-                coherence_score += 5  # Fallback score
-        
-        # 2b. Anomaly consistency (15 points)
-        if len(anomaly_values) > 1 and len(normal_values) > 0:
-            # Reward consistent anomaly scores (low variance relative to separation)
-            relative_anomaly_std = std_anomaly / (abs(float(mean_anomaly) - float(mean_normal)) + 1e-6)
-            consistency_score = 15 * np.exp(-relative_anomaly_std)
-            coherence_score += min(15, consistency_score)
-        
-        components['statistical_coherence'] = min(30, coherence_score)
-
-        # Component 3: Diversity Bonus (10 points)
-        # Encourages exploration and prevents premature convergence
-        diversity_score = 0.0
-        
-        # 3a. Parameter diversity reward
-        diversity_factors = []
-        
-        # Reward diverse aggregation methods
-        if params['aggregation_method'] in ['min', 'weighted', 'sum']:
-            diversity_factors.append(1.5)
-        elif params['aggregation_method'] in ['mean', 'median']:
-            diversity_factors.append(1.0)
-        else:
-            diversity_factors.append(0.5)
-        
-        # Reward balanced threshold approaches
-        if params['threshold_method'] == 'percentile':
-            perc = params.get('threshold_percentile', 5)
-            if 3 <= perc <= 7:  # Sweet spot
-                diversity_factors.append(1.2)
-            else:
-                diversity_factors.append(0.8)
-        
-        # Z-score transformation bonus
-        if params.get('use_zscore_transformation', True):
-            diversity_factors.append(1.1)
-        
-        diversity_score = min(10, float(np.mean(diversity_factors) * 8))
-        components['diversity_bonus'] = diversity_score
-
-        # Final fitness calculation with weights
-        weighted_components = {}
-        for component, score in components.items():
-            weight = self.fitness_weights.get(component, 0.0)
-            weighted_score = score * weight
-            weighted_components[f"{component}_weighted"] = weighted_score
-            # Keep original scores for analysis
-            weighted_components[component] = score
-        
-        # Calculate weighted total fitness
-        total_fitness = sum(components[comp] * self.fitness_weights[comp] 
-                           for comp in components.keys())
-        
-        # Scale to 0-100 range
-        total_fitness = total_fitness * 100
-        
-        # Add small random noise to prevent fitness plateaus
-        convergence_prevention = random.uniform(-0.15, 0.15)
-        final_fitness = max(0.0, min(100.0, total_fitness + convergence_prevention))
-        
-        # Store both original and weighted components for analysis
-        weighted_components['total_weighted'] = total_fitness
-        weighted_components['final_fitness'] = final_fitness
-        
-        return float(final_fitness), weighted_components
-    
-    def _calculate_overlap_coefficient(self, normal_values: np.ndarray, anomaly_values: np.ndarray) -> float:
-        """Calculate overlap coefficient between normal and anomaly score distributions."""
-        try:
-            # Use histogram-based approach for overlap calculation
-            all_values = np.concatenate([normal_values, anomaly_values])
-            min_val, max_val = np.min(all_values), np.max(all_values)
-            
-            if max_val - min_val < 1e-6:
-                return 1.0  # Complete overlap
-            
-            bins = np.linspace(min_val, max_val, 30)
-            normal_hist, _ = np.histogram(normal_values, bins=bins, density=True)
-            anomaly_hist, _ = np.histogram(anomaly_values, bins=bins, density=True)
-            
-            # Calculate overlap as minimum of densities
-            overlap = np.sum(np.minimum(normal_hist, anomaly_hist)) / len(bins)
-            return min(1.0, max(0.0, overlap))
-        except:
-            return 0.5  # Default moderate overlap
-    
-    def _find_convergence_generation(self) -> int:
-        """Finds the generation where the best fitness score plateaus."""
-        if len(self.convergence_data['max_fitness']) < 10:
-            return len(self.convergence_data['max_fitness'])
-        
-        max_fitness = self.convergence_data['max_fitness']
-        window = 10
-        for i in range(window, len(max_fitness)):
-            recent_window = max_fitness[i-window:i]
-            if (np.max(recent_window) - np.min(recent_window)) < 0.1:
-                return i - window
-        return len(max_fitness)
-
-    def _assess_convergence_quality(self) -> str:
-        """Provides a qualitative assessment of the convergence."""
-        if not self.convergence_data: return "Unknown"
-        
-        max_fitness = self.convergence_data['max_fitness']
-        if len(max_fitness) < 20: return "Insufficient Data"
-
-        total_improvement = max_fitness[-1] - max_fitness[0]
-        last_quarter_idx = int(len(max_fitness) * 0.75)
-        late_improvement = max_fitness[-1] - max_fitness[last_quarter_idx]
-
-        if total_improvement <= 0.1: return "Stalled"
-        if late_improvement / total_improvement < 0.05: return "Excellent"
-        if late_improvement / total_improvement < 0.15: return "Good"
-        return "Fair"
-
-    def _create_fitness_plots(self):
-        """Creates and displays the 3 most informative GA optimization plots."""
-        if not self.convergence_data:
-            print("     No convergence data available for plotting.")
+    def _save_optimization_results(self, best_params: Dict, hall_of_fame: tools.HallOfFame, 
+                                 logbook: tools.Logbook):
+        """Save optimization results to files."""
+        if not self.execution_results_dir:
             return
-
+            
         try:
-            plt.style.use('default')
-            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+            import os
+            import json
             
-            gens = self.convergence_data['generations']
-            max_f = self.convergence_data['max_fitness']
-            avg_f = self.convergence_data['avg_fitness']
-            std_f = self.convergence_data['std_fitness']
+            # Save best parameters
+            results = {
+                'best_fitness': float(hall_of_fame[0].fitness.values[0]),
+                'best_bn_weights': best_params['bn_weights'].tolist(),
+                'best_threshold_percentile': float(best_params['threshold_percentile']),
+                'n_bn_groups': int(best_params['n_bn_groups']),
+                'convergence_data': self.convergence_data,
+                'ga_config': {
+                    'population_size': self.config.get('population_size', 100),
+                    'n_generations': self.config.get('n_generations', 50),
+                    'crossover_probability': self.config.get('crossover_probability', 0.8),
+                    'mutation_probability': self.config.get('mutation_probability', 0.15)
+                }
+            }
             
-            # Plot 1: Fitness Evolution (Most Important)
-            ax1 = axes[0]
-            ax1.plot(gens, max_f, 'r-', linewidth=3, label='Best Fitness', marker='o', markersize=4)
-            ax1.plot(gens, avg_f, 'b-', linewidth=2, label='Average Fitness', alpha=0.8)
-            ax1.fill_between(gens, np.array(avg_f) - np.array(std_f), np.array(avg_f) + np.array(std_f), 
+            # Save to JSON file
+            results_path = os.path.join(self.execution_results_dir, 'ga_summary.json')
+            with open(results_path, 'w') as f:
+                json.dump(results, f, indent=2)
+                
+            print(f"📁 Results saved to {results_path}")
+            
+        except Exception as e:
+            print(f"⚠️  Could not save results: {e}")
+
+    def _create_optimization_plots(self):
+        """Create optimization convergence plots."""
+        if not self.convergence_data:
+            return
+            
+        try:
+            import matplotlib.pyplot as plt
+            import os
+            
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+            
+            generations = [d['generation'] for d in self.convergence_data]
+            best_fitness = [d['best_fitness'] for d in self.convergence_data]
+            avg_fitness = [d['avg_fitness'] for d in self.convergence_data]
+            std_fitness = [d['std_fitness'] for d in self.convergence_data]
+            
+            # Plot 1: Fitness evolution
+            ax1.plot(generations, best_fitness, 'r-', linewidth=3, label='Best Fitness', marker='o')
+            ax1.plot(generations, avg_fitness, 'b-', linewidth=2, label='Average Fitness', alpha=0.8)
+            ax1.fill_between(generations, 
+                           np.array(avg_fitness) - np.array(std_fitness),
+                           np.array(avg_fitness) + np.array(std_fitness),
                            alpha=0.2, color='blue', label='±1 Std Dev')
-            conv_gen = self._find_convergence_generation()
-            ax1.axvline(x=conv_gen, color='red', linestyle='--', linewidth=2, label=f'Convergence (Gen {conv_gen})')
+            
             ax1.set_title('GA Fitness Evolution', fontsize=14, fontweight='bold')
             ax1.set_xlabel('Generation')
-            ax1.set_ylabel('Fitness Value (0-100)')
+            ax1.set_ylabel('Fitness Score')
             ax1.legend()
             ax1.grid(True, alpha=0.3)
             ax1.set_ylim(0, 105)
-
-            # Plot 2: Enhanced Fitness Breakdown with Weights
-            ax2 = axes[1]
-            if self.best_individual and hasattr(self.best_individual, 'components'):
-                components = self.best_individual.components
+            
+            # Plot 2: BN Weight Distribution  
+            if self.best_params and 'bn_weights' in self.best_params:
+                weights = self.best_params['bn_weights']
+                bn_indices = np.arange(len(weights))
                 
-                # Show both original and weighted scores
-                comp_names = ['Detection\nQuality', 'Statistical\nCoherence', 'Diversity\nBonus']
-                original_values = [components.get(k, 0) for k in 
-                                  ['detection_quality', 'statistical_coherence', 'diversity_bonus']]
-                weighted_values = [components.get(f"{k}_weighted", 0) * 100 for k in 
-                                  ['detection_quality', 'statistical_coherence', 'diversity_bonus']]
-                
-                x = np.arange(len(comp_names))
-                width = 0.35
-                
-                bars1 = ax2.bar(x - width/2, original_values, width, label='Original Score', alpha=0.8, color='#3498db')
-                bars2 = ax2.bar(x + width/2, weighted_values, width, label='Weighted Contribution', alpha=0.8, color='#e74c3c')
-                
-                # Add value labels on bars
-                for bars in [bars1, bars2]:
-                    ax2.bar_label(bars, fmt='%.1f', fontsize=9)
-                
-                ax2.set_xlabel('Fitness Components')
-                ax2.set_ylabel('Score')
-                ax2.set_title('Fitness Breakdown: Original vs Weighted', fontsize=14, fontweight='bold')
-                ax2.set_xticks(x)
-                ax2.set_xticklabels(comp_names)
-                ax2.legend()
+                bars = ax2.bar(bn_indices, weights, color='steelblue', alpha=0.7)
+                ax2.set_title('Optimized BN Weights', fontsize=14, fontweight='bold')
+                ax2.set_xlabel('BN Index')
+                ax2.set_ylabel('Weight')
                 ax2.grid(True, axis='y', alpha=0.3)
-                ax2.set_ylim(0, max(70, max(max(original_values), max(weighted_values)) * 1.1))
+                
+                # Highlight top weights
+                top_indices = np.argsort(weights)[-3:]
+                for idx in top_indices:
+                    bars[idx].set_color('coral')
+                    bars[idx].set_alpha(0.9)
             else:
-                ax2.text(0.5, 0.5, 'No fitness breakdown available', ha='center', va='center', transform=ax2.transAxes)
-                ax2.set_title('Fitness Breakdown: Original vs Weighted', fontsize=14, fontweight='bold')
-
-            # Plot 3: Optimized Parameters
-            ax3 = axes[2]
-            best_params = self._decode_individual(self.best_individual)
-            param_names = ['threshold_percentile', 'aggregation_method', 'use_zscore_transformation', 'threshold_method']
-            param_labels = [p.replace('_', '\n').title() for p in param_names]
-            values = [
-                best_params['threshold_percentile'],
-                self.aggregation_methods.index(best_params['aggregation_method']),
-                int(best_params['use_zscore_transformation']),
-                self.threshold_methods.index(best_params['threshold_method'])
-            ]
-            text_values = [
-                f"{values[0]:.2f}",
-                best_params['aggregation_method'],
-                str(bool(values[2])),
-                best_params['threshold_method']
-            ]
-            bars = ax3.bar(param_labels, values, color=['#e74c3c', '#3498db', '#2ecc71', '#f39c12'], alpha=0.8)
-            for bar, text_val in zip(bars, text_values):
-                height = bar.get_height()
-                ax3.text(bar.get_x() + bar.get_width()/2., height + 0.1,
-                        text_val, ha='center', va='bottom', fontsize=10, fontweight='bold')
-            ax3.set_title('Optimized Parameters', fontsize=14, fontweight='bold')
-            ax3.set_ylabel('Parameter Value/Index')
-            ax3.grid(True, axis='y', alpha=0.3)
-
+                ax2.text(0.5, 0.5, 'No weight data available', ha='center', va='center', 
+                        transform=ax2.transAxes, fontsize=12)
+                ax2.set_title('BN Weight Distribution', fontsize=14, fontweight='bold')
+            
             plt.tight_layout()
             
-            # Save the plot
-            plot_path = os.path.join(self.results_dir, 'ga_fitness_evolution.png')
-            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-            print(f"     GA plots saved to {plot_path}")
+            if self.execution_results_dir:
+                plot_path = os.path.join(self.execution_results_dir, 'ga_fitness_evolution.png')
+                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                print(f"📊 Plots saved to {plot_path}")
             
-            # Display the plot
             plt.show()
-
+            
         except Exception as e:
-            print(f"     Error creating fitness plots: {e}")
-            traceback.print_exc()
-    
-    def _calculate_stagnation_periods(self, fitness_history, window=5, threshold=0.01):
-        """Calculates periods where fitness stagnated."""
-        periods = []
-        in_stagnation = False
-        for i in range(window, len(fitness_history)):
-            if np.max(fitness_history[i-window:i]) - np.min(fitness_history[i-window:i]) < threshold:
-                if not in_stagnation:
-                    periods.append(1)
-                    in_stagnation = True
-                else:
-                    periods[-1] += 1
-            else:
-                in_stagnation = False
-        return periods
+            print(f"⚠️  Could not create plots: {e}")
 
     def get_optimization_summary(self) -> Dict:
-        """Returns a dictionary summarizing the optimization results."""
-        if not self.best_individual:
-            return {'status': 'Not optimized'}
-        
+        """Return optimization summary for reporting."""
+        if not self.best_params or not self.convergence_data:
+            return {}
+            
         return {
-            'status': 'Optimized',
-            'best_fitness': self.best_individual.fitness.values[0],
-            'best_parameters': self._decode_individual(self.best_individual),
-            'generations_run': len(self.convergence_data.get('generations', [])),
-            'convergence_generation': self._find_convergence_generation()
+            'best_fitness': self.best_fitness,
+            'best_bn_weights': self.best_params['bn_weights'].tolist(),
+            'best_threshold_percentile': self.best_params['threshold_percentile'],
+            'n_generations': len(self.convergence_data),
+            'final_avg_fitness': self.convergence_data[-1]['avg_fitness'] if self.convergence_data else 0,
+            'convergence_achieved': self.best_fitness > 70  # Good fitness threshold
         }
-
-    def _save_optimization_results(self, best_params: Dict, hof):
-        """Saves optimization artifacts like parameters and history to files."""
-        try:
-            # Save comprehensive JSON summary
-            summary_data = self.get_optimization_summary()
-            summary_data['convergence_data'] = self._make_json_serializable(self.convergence_data)
-            summary_path = os.path.join(self.results_dir, 'ga_summary.json')
-            with open(summary_path, 'w') as f:
-                json.dump(summary_data, f, indent=2)
-
-            history_path = os.path.join(self.results_dir, 'ga_fitness_history.csv')
-            pd.DataFrame(self.convergence_data).to_csv(history_path, index=False)
-            
-            print(f"     GA results saved to: {summary_path}")
-            print(f"     GA fitness history saved to: {history_path}")
-            
-        except Exception as e:
-            print(f"     Error saving GA results: {e}")
-
-    def _make_json_serializable(self, obj):
-        """Recursively converts numpy types to native Python types for JSON."""
-        if isinstance(obj, dict):
-            return {k: self._make_json_serializable(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [self._make_json_serializable(i) for i in obj]
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.bool_):
-            return bool(obj)
-        return obj

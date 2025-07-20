@@ -78,9 +78,23 @@ class AnomalyDetector:
             # Median likelihood
             aggregated = likelihood_scores.median(axis=1).values
         elif method == 'weighted':
-            # Weighted average 
-            weights = np.ones(likelihood_scores.shape[1]) / likelihood_scores.shape[1]
+            # Use custom BN weights if available, otherwise uniform weights
+            if 'bn_weights' in self.config and self.config['bn_weights'] is not None:
+                weights = self.config['bn_weights']
+                if len(weights) != likelihood_scores.shape[1]:
+                    print(f"     Warning: BN weights length ({len(weights)}) doesn't match likelihood matrix ({likelihood_scores.shape[1]})")
+                    weights = np.ones(likelihood_scores.shape[1]) / likelihood_scores.shape[1]
+            else:
+                weights = np.ones(likelihood_scores.shape[1]) / likelihood_scores.shape[1]
+            
+            # Ensure weights are normalized
+            weights = np.array(weights)
+            weights = weights / np.sum(weights)
+            
             aggregated = np.average(likelihood_scores.values, axis=1, weights=weights)
+            
+            if verbose:
+                print(f"     Using BN weights - Max: {np.max(weights):.3f}, Min: {np.min(weights):.3f}")
         elif method == 'sum':
             # Sum of log-likelihoods
             aggregated = likelihood_scores.sum(axis=1).values
