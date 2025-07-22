@@ -18,7 +18,7 @@ feature_grouping:
 
 # Bayesian Network learning configuration
 bayesian_network:
-  structure_learning: "naive_bayes"  # Simpler structure for faster computation
+  structure_learning: "hc"  # Simpler structure for faster computation
   discretization_bins: 5
   max_parents: 3
 
@@ -40,7 +40,7 @@ genetic_algorithm:
 
 # CMA-ES optimization configuration (primary)
 cmaes_algorithm:
-  population_size: 20     # Specific population size
+  population_size: 100     # Specific population size
   generations: 100        # Focused exploration
   initial_sigma: 1.0      # Higher initial exploration
 

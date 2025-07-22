@@ -642,14 +642,14 @@ class BayesianAnomalyDetectionSystem:
             except:
                 pass  # Continue without seaborn if not available
             
-            # Create comprehensive figure with subplots
-            fig = plt.figure(figsize=(20, 16))
-            gs = GridSpec(4, 4, figure=fig, hspace=0.35, wspace=0.35)
+            # Create comprehensive figure with subplots (2x3 grid for better spacing)
+            fig = plt.figure(figsize=(22, 12))
+            gs = GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.25)
             
-            # Main title
+            # Main title - reduced size and positioned lower
             fig.suptitle(f'Optimization Performance Comparison: {optimizer_type.upper()} Algorithm\n' + 
                         f'Before vs After Optimization Analysis', 
-                        fontsize=20, fontweight='bold', y=0.98)
+                        fontsize=16, fontweight='bold', y=0.96)
             
             # Extract data for plotting
             baseline_det = baseline_results['detection_metrics']
@@ -660,8 +660,8 @@ class BayesianAnomalyDetectionSystem:
             optimized_scores = optimized_results['score_statistics']
             
             # 1. Anomaly Detection Comparison (Top Left)
-            ax1 = fig.add_subplot(gs[0, :2])
-            categories = ['Anomalies\nDetected', 'Anomaly\nRate (%)', 'Threshold\nValue']
+            ax1 = fig.add_subplot(gs[0, 0])
+            categories = ['Anomalies\nDetected', 'Rate (%)', 'Threshold']
             baseline_vals = [baseline_det['n_anomalies'], baseline_det['anomaly_rate'], 
                            baseline_det.get('threshold', 0)]
             optimized_vals = [optimized_det['n_anomalies'], optimized_det['anomaly_rate'], 
@@ -675,26 +675,26 @@ class BayesianAnomalyDetectionSystem:
             bars2 = ax1.bar(x + width/2, optimized_vals, width, label='Optimized', 
                            color='lightblue', alpha=0.8, edgecolor='darkblue')
             
-            ax1.set_xlabel('Detection Metrics', fontsize=12, fontweight='bold')
-            ax1.set_ylabel('Values', fontsize=12, fontweight='bold')
-            ax1.set_title('🎯 Detection Performance Comparison', fontsize=14, fontweight='bold')
+            ax1.set_xlabel('Detection Metrics', fontsize=10)
+            ax1.set_ylabel('Values', fontsize=10)
+            ax1.set_title('🎯 Detection Performance', fontsize=11, fontweight='bold')
             ax1.set_xticks(x)
-            ax1.set_xticklabels(categories)
-            ax1.legend(fontsize=11)
+            ax1.set_xticklabels(categories, fontsize=9)
+            ax1.legend(fontsize=8)
             ax1.grid(True, alpha=0.3)
             
-            # Add value labels on bars
+            # Add value labels on bars - reduced font size
             for bars in [bars1, bars2]:
                 for bar in bars:
                     height = bar.get_height()
                     ax1.annotate(f'{height:.2f}',
                                 xy=(bar.get_x() + bar.get_width() / 2, height),
-                                xytext=(0, 3), textcoords="offset points",
-                                ha='center', va='bottom', fontsize=10, fontweight='bold')
+                                xytext=(0, 2), textcoords="offset points",
+                                ha='center', va='bottom', fontsize=8)
             
-            # 2. Statistical Separation Quality (Top Right)
-            ax2 = fig.add_subplot(gs[0, 2:])
-            sep_categories = ['Cohen\'s d\nEffect Size', 'Separation\nMagnitude', 'Mean Anomaly\nScore', 'Mean Normal\nScore']
+            # 2. Statistical Separation Quality (Top Middle)
+            ax2 = fig.add_subplot(gs[0, 1])
+            sep_categories = ['Cohen\'s d', 'Separation', 'Anomaly\nScore', 'Normal\nScore']
             baseline_sep_vals = [baseline_sep['cohens_d'], baseline_sep['separation_magnitude'],
                                baseline_sep['mean_anomaly_score'], abs(baseline_sep['mean_normal_score'])]
             optimized_sep_vals = [optimized_sep['cohens_d'], optimized_sep['separation_magnitude'],
@@ -706,70 +706,28 @@ class BayesianAnomalyDetectionSystem:
             bars4 = ax2.bar(x2 + width/2, optimized_sep_vals, width, label='Optimized', 
                            color='lightblue', alpha=0.8, edgecolor='darkblue')
             
-            ax2.set_xlabel('Separation Metrics', fontsize=12, fontweight='bold')
-            ax2.set_ylabel('Values', fontsize=12, fontweight='bold')
-            ax2.set_title('📐 Statistical Separation Quality', fontsize=14, fontweight='bold')
+            ax2.set_xlabel('Separation Metrics', fontsize=10)
+            ax2.set_ylabel('Values', fontsize=10)
+            ax2.set_title('📐 Statistical Separation', fontsize=11, fontweight='bold')
             ax2.set_xticks(x2)
-            ax2.set_xticklabels(sep_categories, rotation=15, ha='right')
-            ax2.legend(fontsize=11)
+            ax2.set_xticklabels(sep_categories, fontsize=9)
+            ax2.legend(fontsize=8)
             ax2.grid(True, alpha=0.3)
             
-            # Add value labels on bars
+            # Add value labels on bars - reduced font size
             for bars in [bars3, bars4]:
                 for bar in bars:
                     height = bar.get_height()
                     ax2.annotate(f'{height:.3f}',
                                 xy=(bar.get_x() + bar.get_width() / 2, height),
-                                xytext=(0, 3), textcoords="offset points",
-                                ha='center', va='bottom', fontsize=10, fontweight='bold')
+                                xytext=(0, 2), textcoords="offset points",
+                                ha='center', va='bottom', fontsize=8)
             
-            # 3. Score Distribution Comparison (Middle Left)
-            ax3 = fig.add_subplot(gs[1, :2])
+            # 3. Performance Metrics Radar Chart (Top Right)
+            ax3 = fig.add_subplot(gs[0, 2], projection='polar')
             
-            # Create synthetic score distributions for visualization
-            np.random.seed(42)  # For reproducible visualization
-            n_samples = 1000
-            
-            # Baseline distribution (less optimized)
-            baseline_anomaly_sim = np.random.normal(baseline_sep['mean_anomaly_score'], 0.5, 
-                                                  int(n_samples * baseline_det['anomaly_rate']/100))
-            baseline_normal_sim = np.random.normal(baseline_sep['mean_normal_score'], 1.0, 
-                                                 int(n_samples * (100-baseline_det['anomaly_rate'])/100))
-            
-            # Optimized distribution (better separation)
-            optimized_anomaly_sim = np.random.normal(optimized_sep['mean_anomaly_score'], 0.45, 
-                                                   int(n_samples * optimized_det['anomaly_rate']/100))
-            optimized_normal_sim = np.random.normal(optimized_sep['mean_normal_score'], 0.95, 
-                                                  int(n_samples * (100-optimized_det['anomaly_rate'])/100))
-            
-            # Plot distributions
-            ax3.hist(baseline_normal_sim, bins=50, alpha=0.6, color='lightcoral', 
-                    label='Baseline Normal', density=True)
-            ax3.hist(baseline_anomaly_sim, bins=30, alpha=0.6, color='red', 
-                    label='Baseline Anomalies', density=True)
-            ax3.hist(optimized_normal_sim, bins=50, alpha=0.6, color='lightblue', 
-                    label='Optimized Normal', density=True)
-            ax3.hist(optimized_anomaly_sim, bins=30, alpha=0.6, color='blue', 
-                    label='Optimized Anomalies', density=True)
-            
-            ax3.set_xlabel('Anomaly Score', fontsize=12, fontweight='bold')
-            ax3.set_ylabel('Density', fontsize=12, fontweight='bold')
-            ax3.set_title('📊 Score Distribution Comparison', fontsize=14, fontweight='bold')
-            ax3.legend(fontsize=11)
-            ax3.grid(True, alpha=0.3)
-            
-            # Add vertical lines for thresholds
-            if baseline_det.get('threshold') and optimized_det.get('threshold'):
-                ax3.axvline(baseline_det['threshold'], color='red', linestyle='--', alpha=0.8, 
-                           label='Baseline Threshold')
-                ax3.axvline(optimized_det['threshold'], color='blue', linestyle='--', alpha=0.8, 
-                           label='Optimized Threshold')
-            
-            # 4. Performance Metrics Radar Chart (Middle Right)
-            ax4 = fig.add_subplot(gs[1, 2:], projection='polar')
-            
-            # Normalize metrics for radar chart (0-1 scale)
-            metrics = ['Cohen\'s d\n(÷3)', 'Anomaly Rate\n(÷10)', 'Separation\n(÷3)', 'Score Range\n(÷10)']
+            # Normalize metrics for radar chart (0-1 scale) - simplified labels
+            metrics = ['Cohen\'s d', 'Rate', 'Separation', 'Range']
             
             baseline_radar = [
                 min(baseline_sep['cohens_d']/3, 1),
@@ -790,25 +748,65 @@ class BayesianAnomalyDetectionSystem:
             optimized_radar += optimized_radar[:1]
             angles += angles[:1]
             
-            ax4.plot(angles, baseline_radar, 'o-', linewidth=2, color='red', alpha=0.8, label='Baseline')
-            ax4.fill(angles, baseline_radar, alpha=0.25, color='red')
-            ax4.plot(angles, optimized_radar, 'o-', linewidth=2, color='blue', alpha=0.8, label='Optimized')
-            ax4.fill(angles, optimized_radar, alpha=0.25, color='blue')
+            ax3.plot(angles, baseline_radar, 'o-', linewidth=2, color='red', alpha=0.8, label='Baseline')
+            ax3.fill(angles, baseline_radar, alpha=0.25, color='red')
+            ax3.plot(angles, optimized_radar, 'o-', linewidth=2, color='blue', alpha=0.8, label='Optimized')
+            ax3.fill(angles, optimized_radar, alpha=0.25, color='blue')
             
-            ax4.set_xticks(angles[:-1])
-            ax4.set_xticklabels(metrics, fontsize=10)
-            ax4.set_ylim(0, 1)
-            ax4.set_title('🔍 Performance Radar\nComparison', fontsize=14, fontweight='bold', y=1.08)
-            ax4.legend(loc='upper right', bbox_to_anchor=(1.3, 1.0))
-            ax4.grid(True)
+            ax3.set_xticks(angles[:-1])
+            ax3.set_xticklabels(metrics, fontsize=8)
+            ax3.set_ylim(0, 1)
+            ax3.set_title('� Performance Radar', fontsize=11, fontweight='bold', y=1.08)
+            ax3.legend(loc='upper right', bbox_to_anchor=(1.2, 0.9), fontsize=8)
+            ax3.grid(True)
             
-            # 5. Improvement/Change Analysis (Bottom Left)
-            ax5 = fig.add_subplot(gs[2, :2])
+            # 4. Score Distribution Comparison (Bottom Left)
+            ax4 = fig.add_subplot(gs[1, 0])
+            
+            # Create synthetic score distributions for visualization
+            np.random.seed(42)  # For reproducible visualization
+            n_samples = 1000
+            
+            # Baseline distribution (less optimized)
+            baseline_anomaly_sim = np.random.normal(baseline_sep['mean_anomaly_score'], 0.5, 
+                                                  int(n_samples * baseline_det['anomaly_rate']/100))
+            baseline_normal_sim = np.random.normal(baseline_sep['mean_normal_score'], 1.0, 
+                                                 int(n_samples * (100-baseline_det['anomaly_rate'])/100))
+            
+            # Optimized distribution (better separation)
+            optimized_anomaly_sim = np.random.normal(optimized_sep['mean_anomaly_score'], 0.45, 
+                                                   int(n_samples * optimized_det['anomaly_rate']/100))
+            optimized_normal_sim = np.random.normal(optimized_sep['mean_normal_score'], 0.95, 
+                                                  int(n_samples * (100-optimized_det['anomaly_rate'])/100))
+            
+            # Plot distributions with reduced bins for clarity
+            ax4.hist(baseline_normal_sim, bins=30, alpha=0.6, color='lightcoral', 
+                    label='Base Normal', density=True)
+            ax4.hist(baseline_anomaly_sim, bins=20, alpha=0.6, color='red', 
+                    label='Base Anomalies', density=True)
+            ax4.hist(optimized_normal_sim, bins=30, alpha=0.6, color='lightblue', 
+                    label='Opt Normal', density=True)
+            ax4.hist(optimized_anomaly_sim, bins=20, alpha=0.6, color='blue', 
+                    label='Opt Anomalies', density=True)
+            
+            ax4.set_xlabel('Anomaly Score', fontsize=10)
+            ax4.set_ylabel('Density', fontsize=10)
+            ax4.set_title('� Score Distribution', fontsize=11, fontweight='bold')
+            ax4.legend(fontsize=8)
+            ax4.grid(True, alpha=0.3)
+            
+            # Add vertical lines for thresholds
+            if baseline_det.get('threshold') and optimized_det.get('threshold'):
+                ax4.axvline(baseline_det['threshold'], color='red', linestyle='--', alpha=0.8)
+                ax4.axvline(optimized_det['threshold'], color='blue', linestyle='--', alpha=0.8)
+            
+            # 5. Improvement/Change Analysis (Bottom Middle)
+            ax5 = fig.add_subplot(gs[1, 1])
             
             # Calculate percentage changes
             changes = {
                 'Anomalies': (optimized_det['n_anomalies'] - baseline_det['n_anomalies']) / max(baseline_det['n_anomalies'], 1) * 100,
-                'Anomaly Rate': (optimized_det['anomaly_rate'] - baseline_det['anomaly_rate']) / max(baseline_det['anomaly_rate'], 0.1) * 100,
+                'Rate': (optimized_det['anomaly_rate'] - baseline_det['anomaly_rate']) / max(baseline_det['anomaly_rate'], 0.1) * 100,
                 'Cohen\'s d': (optimized_sep['cohens_d'] - baseline_sep['cohens_d']) / max(baseline_sep['cohens_d'], 0.1) * 100,
                 'Separation': (optimized_sep['separation_magnitude'] - baseline_sep['separation_magnitude']) / max(baseline_sep['separation_magnitude'], 0.1) * 100
             }
@@ -818,19 +816,19 @@ class BayesianAnomalyDetectionSystem:
             colors = ['green' if x > 0 else 'red' if x < 0 else 'gray' for x in change_vals]
             
             bars = ax5.barh(change_names, change_vals, color=colors, alpha=0.7, edgecolor='black')
-            ax5.set_xlabel('Percentage Change (%)', fontsize=12, fontweight='bold')
-            ax5.set_title('📈 Optimization Impact Analysis', fontsize=14, fontweight='bold')
+            ax5.set_xlabel('Change (%)', fontsize=10)
+            ax5.set_title('📈 Impact Analysis', fontsize=11, fontweight='bold')
             ax5.axvline(0, color='black', linewidth=1)
             ax5.grid(True, alpha=0.3)
             
-            # Add value labels
+            # Add value labels - reduced font size
             for bar, val in zip(bars, change_vals):
                 ax5.text(val + (0.5 if val > 0 else -0.5), bar.get_y() + bar.get_height()/2, 
-                        f'{val:+.2f}%', va='center', ha='left' if val > 0 else 'right', 
-                        fontsize=11, fontweight='bold')
+                        f'{val:+.1f}%', va='center', ha='left' if val > 0 else 'right', 
+                        fontsize=8)
             
             # 6. Quality Assessment Matrix (Bottom Right)
-            ax6 = fig.add_subplot(gs[2, 2:])
+            ax6 = fig.add_subplot(gs[1, 2])
             
             # Create quality assessment matrix
             quality_data = np.array([
@@ -844,99 +842,27 @@ class BayesianAnomalyDetectionSystem:
             
             im = ax6.imshow(quality_data, cmap='RdYlGn', aspect='auto', vmin=0, vmax=4)
             
-            # Add labels
-            quality_labels = ['Cohen\'s d Quality', 'Anomaly Rate Quality', 'Separation Quality']
+            # Add labels - shortened
+            quality_labels = ['Cohen\'s d', 'Anomaly Rate', 'Separation']
             condition_labels = ['Baseline', 'Optimized']
             
             ax6.set_xticks(np.arange(len(condition_labels)))
             ax6.set_yticks(np.arange(len(quality_labels)))
-            ax6.set_xticklabels(condition_labels, fontsize=11, fontweight='bold')
-            ax6.set_yticklabels(quality_labels, fontsize=11, fontweight='bold')
-            ax6.set_title('🎖️ Quality Assessment Matrix', fontsize=14, fontweight='bold')
+            ax6.set_xticklabels(condition_labels, fontsize=10)
+            ax6.set_yticklabels(quality_labels, fontsize=9)
+            ax6.set_title('🎖️ Quality Matrix', fontsize=11, fontweight='bold')
             
-            # Add text annotations
-            quality_text = [['Poor', 'Fair', 'Good', 'Very Good', 'Excellent'],
-                          ['Poor', 'Fair', 'Good', 'Very Good', 'Excellent']]
-            
+            # Add text annotations - reduced font size
             for i in range(len(quality_labels)):
                 for j in range(len(condition_labels)):
                     score = int(quality_data[i, j])
-                    text_label = ['Poor', 'Fair', 'Good', 'Very Good', 'Excellent'][score]
+                    text_label = ['Poor', 'Fair', 'Good', 'V.Good', 'Excellent'][score]
                     ax6.text(j, i, f'{score}/4\n{text_label}', ha="center", va="center",
-                            fontsize=10, fontweight='bold', color='white' if score < 2 else 'black')
+                            fontsize=9, color='white' if score < 2 else 'black')
             
-            # Add colorbar
+            # Add colorbar - smaller
             cbar = plt.colorbar(im, ax=ax6, shrink=0.6)
-            cbar.set_label('Quality Score', fontsize=11, fontweight='bold')
-            
-            # 7. Fitness Evolution (if available) - Bottom span
-            ax7 = fig.add_subplot(gs[3, :])
-            
-            # Get optimizer-specific data
-            if optimizer_type == 'genetic' and hasattr(self.genetic_optimizer, 'best_fitness'):
-                # Try to get fitness evolution from the optimizer
-                fitness_data = getattr(self.genetic_optimizer, 'fitness_evolution', None)
-                if fitness_data and len(fitness_data) > 0:
-                    generations = range(1, len(fitness_data) + 1)
-                    ax7.plot(generations, fitness_data, 'b-', linewidth=2, marker='o', 
-                            markersize=4, label=f'{optimizer_type.upper()} Fitness Evolution')
-                    ax7.set_xlabel('Generation', fontsize=12, fontweight='bold')
-                    ax7.set_ylabel('Fitness Score', fontsize=12, fontweight='bold')
-                    ax7.set_title(f'🧬 {optimizer_type.upper()} Optimization Progress', fontsize=14, fontweight='bold')
-                    
-                    # Add final fitness annotation
-                    final_fitness = fitness_data[-1]
-                    ax7.annotate(f'Final: {final_fitness:.2f}/100', 
-                                xy=(len(generations), final_fitness),
-                                xytext=(len(generations)-10, final_fitness+2),
-                                fontsize=12, fontweight='bold',
-                                arrowprops=dict(arrowstyle='->', color='red'))
-                else:
-                    # Show final fitness achievement
-                    final_fitness = getattr(self.genetic_optimizer, 'best_fitness', 0)
-                    ax7.text(0.5, 0.5, f'{optimizer_type.upper()} Optimization Completed\n'
-                            f'Final Fitness: {final_fitness:.2f}/100\n'
-                            f'✅ Optimization successful!', 
-                            transform=ax7.transAxes, ha='center', va='center', 
-                            fontsize=14, fontweight='bold',
-                            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen", alpha=0.7))
-            elif optimizer_type == 'cmaes' and hasattr(self.cmaes_optimizer, 'best_fitness'):
-                # Try to get fitness evolution from CMA-ES optimizer
-                fitness_data = getattr(self.cmaes_optimizer, 'fitness_evolution', None)
-                if fitness_data and len(fitness_data) > 0:
-                    generations = range(1, len(fitness_data) + 1)
-                    ax7.plot(generations, fitness_data, 'g-', linewidth=2, marker='s', 
-                            markersize=4, label=f'{optimizer_type.upper()} Fitness Evolution')
-                    ax7.set_xlabel('Generation', fontsize=12, fontweight='bold')
-                    ax7.set_ylabel('Fitness Score', fontsize=12, fontweight='bold')
-                    ax7.set_title(f'🎯 {optimizer_type.upper()} Optimization Progress', fontsize=14, fontweight='bold')
-                    
-                    # Add final fitness annotation
-                    final_fitness = fitness_data[-1]
-                    ax7.annotate(f'Final: {final_fitness:.2f}/100', 
-                                xy=(len(generations), final_fitness),
-                                xytext=(len(generations)-10, final_fitness+2),
-                                fontsize=12, fontweight='bold',
-                                arrowprops=dict(arrowstyle='->', color='red'))
-                else:
-                    # Show final fitness achievement
-                    final_fitness = getattr(self.cmaes_optimizer, 'best_fitness', 0)
-                    ax7.text(0.5, 0.5, f'{optimizer_type.upper()} Optimization Completed\n'
-                            f'Final Fitness: {final_fitness:.2f}/100\n'
-                            f'✅ Optimization successful!', 
-                            transform=ax7.transAxes, ha='center', va='center', 
-                            fontsize=14, fontweight='bold',
-                            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.7))
-            else:
-                # Create synthetic fitness improvement visualization
-                ax7.text(0.5, 0.5, f'{optimizer_type.upper()} optimization completed successfully\n'
-                        f'Baseline → Optimized performance improvement achieved', 
-                        transform=ax7.transAxes, ha='center', va='center', 
-                        fontsize=14, fontweight='bold',
-                        bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen", alpha=0.7))
-            
-            ax7.grid(True, alpha=0.3)
-            ax7.legend(fontsize=11)
+            cbar.set_label('Quality', fontsize=10)
             
             # Save the comprehensive comparison plot
             results_dir = self.visualizer.get_execution_folder_path()
@@ -1553,7 +1479,7 @@ if __name__ == "__main__":
     print("9. Standard Conservative - Basic conservative detection settings")
     print("=" * 60)
     
-    experiment_to_run = 1  # <--- CHANGE THIS VALUE TO SELECT AN EXPERIMENT
+    experiment_to_run = 3  # <--- CHANGE THIS VALUE TO SELECT AN EXPERIMENT
 
     if experiment_to_run == 1:
         print(">>> Running default configuration...")
