@@ -108,14 +108,26 @@ class BayesianAnomalyDetectionSystem:
         
         # Step 6: Anomaly Detection (Baseline)
         print("🔍 Step 6: Detecting anomalies (baseline)...")
+        
+        # Store original config and temporarily use default baseline config for fair comparison
+        original_config = self.anomaly_detector.config.copy()
+        baseline_config = original_config.copy()
+        # Use default aggregation method for baseline (not experiment-specific method)
+        baseline_config['aggregation_method'] = 'mean'
+        baseline_config['threshold_percentile'] = 5.0
+        self.anomaly_detector.config = baseline_config
+        
         self.anomaly_scores, self.anomalies = self.anomaly_detector.detect_anomalies(
             self.likelihood_scores
         )
         print(f"   Detected {len(self.anomalies)} anomalies (baseline)")
         
-        # Store baseline results for comparison
+        # Store baseline results for comparison (with default config)
         baseline_results = self._compute_performance_metrics()
         self.baseline_performance = baseline_results
+        
+        # Restore original config for optimization
+        self.anomaly_detector.config = original_config
         
         # Step 7: Optimization (Optional)
         if self.config['optimization'].get('use_optimization', True):
